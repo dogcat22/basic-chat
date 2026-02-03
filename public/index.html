@@ -1,40 +1,384 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Basic Chat</title>
+  <title>Basic Chat with Rooms</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    h2 {
+      color: #333;
+      border-bottom: 2px solid #4CAF50;
+      padding-bottom: 10px;
+    }
+    .room-controls {
+      background: white;
+      padding: 15px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .room-info {
+      background: #e8f4f8;
+      padding: 10px;
+      border-radius: 5px;
+      margin: 10px 0;
+    }
+    .current-room {
+      font-weight: bold;
+      color: #2196F3;
+      font-size: 1.2em;
+    }
+    input, button, select {
+      padding: 10px;
+      margin: 5px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    input[type="text"] {
+      width: 150px;
+    }
+    #message {
+      width: 300px;
+    }
+    button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    button.secondary {
+      background-color: #2196F3;
+    }
+    button.secondary:hover {
+      background-color: #1976D2;
+    }
+    #messages {
+      list-style-type: none;
+      padding: 0;
+      max-height: 400px;
+      overflow-y: auto;
+      background: white;
+      border-radius: 5px;
+      padding: 15px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    #messages li {
+      padding: 10px;
+      margin: 5px 0;
+      border-bottom: 1px solid #eee;
+    }
+    #messages li.system {
+      color: #666;
+      font-style: italic;
+      font-size: 0.9em;
+    }
+    #messages li:last-child {
+      border-bottom: none;
+    }
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+      font-weight: bold;
+    }
+    .connected {
+      background-color: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .disconnected {
+      background-color: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 15px 0;
+    }
+    .room-stats {
+      margin-top: 20px;
+      padding: 15px;
+      background: white;
+      border-radius: 5px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .room-stats h3 {
+      margin-top: 0;
+      color: #333;
+    }
+  </style>
 </head>
 <body>
-  <h2>Chat</h2>
-
+  <h2>Basic Chat with Rooms</h2>
+  
+  <div class="room-controls">
+    <h3>Room Controls</h3>
+    <div class="room-info">
+      Current Room: <span class="current-room" id="currentRoom">001</span>
+      | Users in room: <span id="roomUserCount">1</span>
+    </div>
+    
+    <div class="controls">
+      <input type="text" id="username" placeholder="Username" value="Guest" />
+      <input type="text" id="roomInput" placeholder="Room (001-100)" value="001" maxlength="3" />
+      <button onclick="joinRoom()" class="secondary">Join Room</button>
+      
+      <select id="roomSelect" onchange="changeRoom(this.value)">
+        <option value="">Quick Select</option>
+        <option value="001" selected>Room 001 (Main)</option>
+        <option value="002">Room 002</option>
+        <option value="003">Room 003</option>
+        <option value="010">Room 010</option>
+        <option value="050">Room 050</option>
+        <option value="100">Room 100</option>
+      </select>
+      
+      <button onclick="getRoomStats()">Refresh Stats</button>
+    </div>
+  </div>
+  
+  <div class="status disconnected" id="status">
+    Status: Connecting...
+  </div>
+  
   <ul id="messages"></ul>
-
-  <input id="username" placeholder="Username" />
-  <input id="message" placeholder="Message" />
-  <button onclick="send()">Send</button>
-
+  
+  <div class="controls">
+    <input id="message" placeholder="Type your message here..." onkeypress="handleEnter(event)" />
+    <button onclick="send()">Send Message</button>
+    <button onclick="clearMessages()" style="background-color: #f44336;">Clear Chat</button>
+  </div>
+  
+  <div class="room-stats">
+    <h3>Room Statistics</h3>
+    <div id="roomStats">Loading statistics...</div>
+  </div>
+  
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    const socket = io();
-
-    socket.on("chat message", (data) => {
-      const li = document.createElement("li");
-      li.textContent = data.username + ": " + data.message;
-      document.getElementById("messages").appendChild(li);
-    });
-
-    function send() {
-      const username = document.getElementById("username").value;
-      const message = document.getElementById("message").value;
-
-      if (!username || !message) return;
-
-      socket.emit("chat message", {
-        username,
-        message
+    let socket;
+    let currentRoom = '001';
+    let roomUsers = new Map(); // Track users per room
+    
+    function initConnection() {
+      socket = io();
+      
+      socket.on("connect", () => {
+        console.log("Connected to server");
+        document.getElementById("status").textContent = "Status: Connected";
+        document.getElementById("status").className = "status connected";
+        addSystemMessage("Connected to chat server");
+        
+        // Join default room
+        joinRoom(currentRoom);
       });
-
-      document.getElementById("message").value = "";
+      
+      socket.on("disconnect", () => {
+        console.log("Disconnected from server");
+        document.getElementById("status").textContent = "Status: Disconnected";
+        document.getElementById("status").className = "status disconnected";
+        addSystemMessage("Disconnected from server");
+      });
+      
+      socket.on("chat message", (data) => {
+        // Only show messages for current room
+        if (data.room === currentRoom) {
+          addMessage(data.username, data.message);
+        }
+      });
+      
+      socket.on("room joined", (room) => {
+        currentRoom = room;
+        document.getElementById("currentRoom").textContent = room;
+        document.getElementById("roomInput").value = room;
+        addSystemMessage(`Joined room: ${room}`);
+        updateRoomSelect(room);
+      });
+      
+      socket.on("room left", (room) => {
+        addSystemMessage(`Left room: ${room}`);
+      });
+      
+      socket.on("user joined", (data) => {
+        if (data.room === currentRoom) {
+          addSystemMessage(`${data.username} joined the room`);
+          updateUserCount();
+        }
+      });
+      
+      socket.on("user left", (data) => {
+        if (data.room === currentRoom) {
+          addSystemMessage(`${data.username} left the room`);
+          updateUserCount();
+        }
+      });
+      
+      socket.on("rooms list", (rooms) => {
+        updateRoomStats(rooms);
+      });
+      
+      socket.on("error", (message) => {
+        alert(`Error: ${message}`);
+      });
     }
+    
+    function joinRoom() {
+      const roomInput = document.getElementById("roomInput");
+      let room = roomInput.value.trim().padStart(3, '0');
+      
+      // Validate room number
+      if (!/^\d{3}$/.test(room)) {
+        alert('Please enter a valid room number (001-100)');
+        return;
+      }
+      
+      const roomNum = parseInt(room);
+      if (roomNum < 1 || roomNum > 100) {
+        alert('Room number must be between 001 and 100');
+        return;
+      }
+      
+      room = roomNum.toString().padStart(3, '0');
+      
+      // Update username first
+      const username = document.getElementById("username").value.trim();
+      if (username) {
+        socket.emit("update username", username);
+      }
+      
+      // Join the new room
+      socket.emit("join room", room);
+    }
+    
+    function changeRoom(room) {
+      if (!room) return;
+      document.getElementById("roomInput").value = room;
+      joinRoom();
+    }
+    
+    function updateRoomSelect(room) {
+      const select = document.getElementById("roomSelect");
+      for (let option of select.options) {
+        option.selected = option.value === room;
+      }
+    }
+    
+    function send() {
+      const username = document.getElementById("username").value.trim();
+      const messageInput = document.getElementById("message");
+      const message = messageInput.value.trim();
+      
+      if (!username) {
+        alert('Please enter a username');
+        return;
+      }
+      
+      if (!message) {
+        alert('Please enter a message');
+        return;
+      }
+      
+      socket.emit("chat message", {
+        username: username,
+        message: message,
+        room: currentRoom
+      });
+      
+      messageInput.value = "";
+      messageInput.focus();
+    }
+    
+    function handleEnter(event) {
+      if (event.key === "Enter") {
+        send();
+      }
+    }
+    
+    function addMessage(username, message) {
+      const li = document.createElement("li");
+      li.textContent = `${username}: ${message}`;
+      document.getElementById("messages").appendChild(li);
+      scrollToBottom();
+    }
+    
+    function addSystemMessage(message) {
+      const li = document.createElement("li");
+      li.className = "system";
+      li.textContent = `[System] ${message}`;
+      document.getElementById("messages").appendChild(li);
+      scrollToBottom();
+    }
+    
+    function clearMessages() {
+      document.getElementById("messages").innerHTML = "";
+    }
+    
+    function scrollToBottom() {
+      const messagesDiv = document.getElementById("messages");
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+    
+    function getRoomStats() {
+      socket.emit("get rooms");
+    }
+    
+    function updateRoomStats(rooms) {
+      const statsDiv = document.getElementById("roomStats");
+      let html = `<p>Total active rooms: ${rooms.length}</p>`;
+      html += "<ul>";
+      rooms.forEach(room => {
+        html += `<li>Room ${room.id}: ${room.userCount} user(s)</li>`;
+        if (room.id === currentRoom) {
+          document.getElementById("roomUserCount").textContent = room.userCount;
+        }
+      });
+      html += "</ul>";
+      statsDiv.innerHTML = html;
+    }
+    
+    function updateUserCount() {
+      // Request updated room stats
+      getRoomStats();
+    }
+    
+    // Initialize connection when page loads
+    document.addEventListener("DOMContentLoaded", function() {
+      initConnection();
+      
+      // Set up room input validation
+      const roomInput = document.getElementById("roomInput");
+      roomInput.addEventListener("keypress", function(event) {
+        if (event.key === "Enter") {
+          joinRoom();
+        }
+      });
+      
+      // Only allow numbers
+      roomInput.addEventListener("input", function() {
+        this.value = this.value.replace(/[^0-9]/g, '');
+        if (this.value.length > 3) {
+          this.value = this.value.slice(0, 3);
+        }
+      });
+      
+      // Focus on message input
+      document.getElementById("message").focus();
+      
+      // Load room stats every 30 seconds
+      setInterval(getRoomStats, 30000);
+    });
   </script>
 </body>
 </html>
