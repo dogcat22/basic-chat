@@ -24,9 +24,15 @@ const PORT = process.env.PORT || 3000;
 // Serve static files from "public" folder
 app.use(express.static("public"));
 
+// =================== ADMIN CONFIGURATION ===================
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123"; // Default password, change this!
+const adminSessions = new Map(); // sessionId -> {socketId, expiresAt}
+// =================== END ADMIN CONFIGURATION ===================
+
 // Track rooms and users
 const rooms = new Map(); // roomId -> Set of socketIds
-const users = new Map(); // socketId -> {username, room}
+const users = new Map(); // socketId -> {username, room, isAdmin: false}
+const adminUsers = new Set(); // Set of socketIds that are admin
 
 // Store messages temporarily (for 6 hours)
 const messageStore = new Map(); // roomId -> Array of {username, message, timestamp, expiresAt}
@@ -135,7 +141,8 @@ app.get("/api/health", (req, res) => {
     rooms: rooms.size,
     messages: Array.from(messageStore.values())
       .reduce((acc, messages) => acc + messages.length, 0),
-    keepAliveEnabled: keepAliveEnabled
+    keepAliveEnabled: keepAliveEnabled,
+    adminUsers: adminUsers.size
   });
 });
 
@@ -147,6 +154,43 @@ app.get("/ping", (req, res) => {
 
 // Cleanup interval to remove expired messages
 setInterval(cleanupExpiredMessages, 3600000); // Run every hour
+
+// Cleanup expired admin sessions
+setInterval(cleanupExpiredSessions, 600000); // Run every 10 minutes
+
+function cleanupExpiredSessions() {
+  const now = Date.now();
+  for (const [sessionId, session] of adminSessions.entries()) {
+    if (session.expiresAt < now) {
+      adminSessions.delete(sessionId);
+      console.log(`Cleaned up expired admin session: ${sessionId}`);
+    }
+  }
+}
+
+function createAdminSession(socketId) {
+  const sessionId = `admin_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  adminSessions.set(sessionId, {
+    socketId: socketId,
+    expiresAt: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
+  });
+  return sessionId;
+}
+
+function validateAdminSession(socketId, sessionId) {
+  const session = adminSessions.get(sessionId);
+  if (!session) return false;
+  
+  if (session.socketId !== socketId) return false;
+  if (session.expiresAt < Date.now()) {
+    adminSessions.delete(sessionId);
+    return false;
+  }
+  
+  // Extend session
+  session.expiresAt = Date.now() + (24 * 60 * 60 * 1000);
+  return true;
+}
 
 function cleanupExpiredMessages() {
   const now = Date.now();
@@ -207,16 +251,30 @@ function getRecentMessages(roomId) {
 function handleServerCommand(socket, message, user) {
   const room = user.room;
   
+  // Check if user is admin for admin-only commands
+  const isAdmin = adminUsers.has(socket.id);
+  
   // Check for server!power!down! command
   if (message.toLowerCase() === "server!power!down!") {
+    if (!isAdmin) {
+      socket.emit("chat message", {
+        username: "Server Admin",
+        message: "⚠️ Admin privileges required for this command. Use /admin [password] to authenticate.",
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      return true;
+    }
+    
     if (keepAliveEnabled) {
       keepAliveEnabled = false;
       stopKeepAlive();
       
       // Send confirmation message to the room
       const adminMessage = {
-        username: "Server Admin",
-        message: "⚡ Keep-alive function DISABLED. Server may shut down due to inactivity to save instance hours.",
+        username: "⚡ Server Admin",
+        message: "Keep-alive function DISABLED. Server may shut down due to inactivity to save instance hours.",
         room: room,
         timestamp: new Date().toISOString(),
         isSystem: true
@@ -233,7 +291,7 @@ function handleServerCommand(socket, message, user) {
       
       // Send private confirmation to command sender
       socket.emit("chat message", {
-        username: "Server Admin",
+        username: "⚡ Server Admin",
         message: "✅ Keep-alive disabled. Server will use less instance hours but may shut down after ~25 minutes of inactivity.",
         room: room,
         timestamp: new Date().toISOString(),
@@ -242,7 +300,7 @@ function handleServerCommand(socket, message, user) {
     } else {
       // Already disabled
       socket.emit("chat message", {
-        username: "Server Admin",
+        username: "⚡ Server Admin",
         message: "⚠️ Keep-alive is already disabled.",
         room: room,
         timestamp: new Date().toISOString(),
@@ -254,14 +312,25 @@ function handleServerCommand(socket, message, user) {
   
   // Check for server!power!on command
   if (message.toLowerCase() === "server!power!on") {
+    if (!isAdmin) {
+      socket.emit("chat message", {
+        username: "Server Admin",
+        message: "⚠️ Admin privileges required for this command. Use /admin [password] to authenticate.",
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      return true;
+    }
+    
     if (!keepAliveEnabled) {
       keepAliveEnabled = true;
       startKeepAlive();
       
       // Send confirmation message to the room
       const adminMessage = {
-        username: "Server Admin",
-        message: "⚡ Keep-alive function ENABLED. Server will stay active to prevent shutdown.",
+        username: "⚡ Server Admin",
+        message: "Keep-alive function ENABLED. Server will stay active to prevent shutdown.",
         room: room,
         timestamp: new Date().toISOString(),
         isSystem: true
@@ -278,7 +347,7 @@ function handleServerCommand(socket, message, user) {
       
       // Send private confirmation to command sender
       socket.emit("chat message", {
-        username: "Server Admin",
+        username: "⚡ Server Admin",
         message: "✅ Keep-alive enabled. Server will stay active to conserve instance hours.",
         room: room,
         timestamp: new Date().toISOString(),
@@ -287,7 +356,7 @@ function handleServerCommand(socket, message, user) {
     } else {
       // Already enabled
       socket.emit("chat message", {
-        username: "Server Admin",
+        username: "⚡ Server Admin",
         message: "⚠️ Keep-alive is already enabled.",
         room: room,
         timestamp: new Date().toISOString(),
@@ -310,8 +379,8 @@ function handleServerCommand(socket, message, user) {
     const seconds = Math.floor(uptime % 60);
     
     const statusMessage = {
-      username: "Server Admin",
-      message: `📊 Server Status:\n• Uptime: ${hours}h ${minutes}m ${seconds}s\n• Users: ${totalUsers}\n• Rooms: ${totalRooms}\n• Messages stored: ${totalMessages}\n• Keep-alive: ${keepAliveEnabled ? 'ENABLED ✅' : 'DISABLED ⚠️'}\n• Instance hours: ${keepAliveEnabled ? 'Conserving' : 'Saving'}`,
+      username: "📊 Server Admin",
+      message: `Server Status:\n• Uptime: ${hours}h ${minutes}m ${seconds}s\n• Users: ${totalUsers}\n• Rooms: ${totalRooms}\n• Messages stored: ${totalMessages}\n• Keep-alive: ${keepAliveEnabled ? 'ENABLED ✅' : 'DISABLED ⚠️'}\n• Admin users: ${adminUsers.size}\n• Your status: ${isAdmin ? 'ADMIN ✅' : 'Regular user'}`,
       room: room,
       timestamp: new Date().toISOString(),
       isSystem: true
@@ -324,14 +393,265 @@ function handleServerCommand(socket, message, user) {
   // Check for server!help command
   if (message.toLowerCase() === "server!help") {
     const helpMessage = {
-      username: "Server Admin",
-      message: `🔧 Server Commands:\n• server!power!down! - Disable keep-alive (save instance hours)\n• server!power!on - Enable keep-alive (prevent shutdown)\n• server!status - Show server status\n• server!help - Show this help`,
+      username: "🔧 Server Admin",
+      message: `Server Commands:\n• /admin [password] - Authenticate as admin\n• server!power!down! - Disable keep-alive (ADMIN)\n• server!power!on - Enable keep-alive (ADMIN)\n• server!status - Show server status\n• server!help - Show this help\n• server!broadcast [message] - Broadcast to all rooms (ADMIN)\n• server!clear [room] - Clear all messages in room (ADMIN)\n• server!kick [username] - Kick user from server (ADMIN)\n• server!users - List all connected users (ADMIN)`,
       room: room,
       timestamp: new Date().toISOString(),
       isSystem: true
     };
     
     socket.emit("chat message", helpMessage);
+    return true;
+  }
+  
+  // Check for /admin command (password authentication)
+  if (message.toLowerCase().startsWith("/admin ")) {
+    const password = message.substring(7).trim();
+    
+    if (password === ADMIN_PASSWORD) {
+      // Create admin session
+      const sessionId = createAdminSession(socket.id);
+      adminUsers.add(socket.id);
+      
+      if (users.has(socket.id)) {
+        users.get(socket.id).isAdmin = true;
+      }
+      
+      socket.emit("admin authenticated", {
+        sessionId: sessionId,
+        message: "✅ Admin privileges granted! You can now use admin commands."
+      });
+      
+      socket.emit("chat message", {
+        username: "🔐 Server Admin",
+        message: "✅ Admin privileges granted! You can now use admin commands.",
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      
+      console.log(`[${new Date().toISOString()}] Admin login successful: ${socket.id} (${user.username})`);
+    } else {
+      socket.emit("chat message", {
+        username: "🔐 Server Admin",
+        message: "❌ Invalid admin password.",
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      
+      console.log(`[${new Date().toISOString()}] Failed admin login attempt: ${socket.id} (${user.username})`);
+    }
+    return true;
+  }
+  
+  // Check for server!broadcast command (admin only)
+  if (message.toLowerCase().startsWith("server!broadcast ")) {
+    if (!isAdmin) {
+      socket.emit("chat message", {
+        username: "Server Admin",
+        message: "⚠️ Admin privileges required for broadcast command.",
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      return true;
+    }
+    
+    const broadcastMessage = message.substring(17).trim();
+    if (broadcastMessage) {
+      const adminBroadcast = {
+        username: "📢 Server Broadcast",
+        message: broadcastMessage,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      };
+      
+      // Broadcast to all rooms
+      io.emit("chat message", adminBroadcast);
+      
+      // Also send to all rooms in message store
+      for (const roomId of rooms.keys()) {
+        storeMessage(roomId, adminBroadcast.username, adminBroadcast.message);
+      }
+      
+      socket.emit("chat message", {
+        username: "📢 Server Admin",
+        message: "✅ Broadcast sent to all rooms.",
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      
+      console.log(`[${new Date().toISOString()}] Admin broadcast by ${user.username}: ${broadcastMessage}`);
+    }
+    return true;
+  }
+  
+  // Check for server!clear command (admin only)
+  if (message.toLowerCase().startsWith("server!clear ")) {
+    if (!isAdmin) {
+      socket.emit("chat message", {
+        username: "Server Admin",
+        message: "⚠️ Admin privileges required for clear command.",
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      return true;
+    }
+    
+    const targetRoom = message.substring(13).trim().padStart(3, '0');
+    
+    if (messageStore.has(targetRoom)) {
+      messageStore.delete(targetRoom);
+      
+      socket.emit("chat message", {
+        username: "🧹 Server Admin",
+        message: `✅ Cleared all messages in room ${targetRoom}.`,
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      
+      // Notify users in that room
+      io.to(targetRoom).emit("chat message", {
+        username: "🧹 Server Admin",
+        message: `All messages in this room have been cleared by an administrator.`,
+        room: targetRoom,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      
+      console.log(`[${new Date().toISOString()}] Admin cleared room ${targetRoom} by ${user.username}`);
+    } else {
+      socket.emit("chat message", {
+        username: "🧹 Server Admin",
+        message: `⚠️ Room ${targetRoom} not found or already empty.`,
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+    }
+    return true;
+  }
+  
+  // Check for server!users command (admin only)
+  if (message.toLowerCase() === "server!users") {
+    if (!isAdmin) {
+      socket.emit("chat message", {
+        username: "Server Admin",
+        message: "⚠️ Admin privileges required for users command.",
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      return true;
+    }
+    
+    const userList = Array.from(users.entries())
+      .map(([socketId, userData]) => ({
+        username: userData.username,
+        room: userData.room,
+        isAdmin: adminUsers.has(socketId)
+      }))
+      .sort((a, b) => a.room.localeCompare(b.room));
+    
+    let userListText = "Connected Users:\n";
+    userList.forEach(user => {
+      userListText += `• ${user.username} (Room: ${user.room}) ${user.isAdmin ? '[ADMIN]' : ''}\n`;
+    });
+    
+    socket.emit("chat message", {
+      username: "👥 Server Admin",
+      message: userListText,
+      room: room,
+      timestamp: new Date().toISOString(),
+      isSystem: true
+    });
+    
+    return true;
+  }
+  
+  // Check for server!kick command (admin only)
+  if (message.toLowerCase().startsWith("server!kick ")) {
+    if (!isAdmin) {
+      socket.emit("chat message", {
+        username: "Server Admin",
+        message: "⚠️ Admin privileges required for kick command.",
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      return true;
+    }
+    
+    const targetUsername = message.substring(12).trim();
+    let kicked = false;
+    
+    // Find user by username
+    for (const [socketId, userData] of users.entries()) {
+      if (userData.username.toLowerCase() === targetUsername.toLowerCase()) {
+        // Don't allow kicking other admins
+        if (adminUsers.has(socketId)) {
+          socket.emit("chat message", {
+            username: "👢 Server Admin",
+            message: `⚠️ Cannot kick another administrator.`,
+            room: room,
+            timestamp: new Date().toISOString(),
+            isSystem: true
+          });
+          return true;
+        }
+        
+        // Kick the user
+        io.to(socketId).emit("chat message", {
+          username: "👢 Server Admin",
+          message: "You have been kicked from the server by an administrator.",
+          room: userData.room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+        
+        // Disconnect after short delay
+        setTimeout(() => {
+          io.sockets.sockets.get(socketId)?.disconnect();
+        }, 1000);
+        
+        // Notify the admin
+        socket.emit("chat message", {
+          username: "👢 Server Admin",
+          message: `✅ Kicked user: ${userData.username} from room ${userData.room}`,
+          room: room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+        
+        // Notify the room
+        io.to(userData.room).emit("chat message", {
+          username: "👢 Server Admin",
+          message: `${userData.username} has been kicked from the server.`,
+          room: userData.room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+        
+        kicked = true;
+        console.log(`[${new Date().toISOString()}] Admin kicked user ${userData.username} by ${users.get(socket.id).username}`);
+        break;
+      }
+    }
+    
+    if (!kicked) {
+      socket.emit("chat message", {
+        username: "👢 Server Admin",
+        message: `⚠️ User "${targetUsername}" not found.`,
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+    }
+    
     return true;
   }
   
@@ -346,7 +666,7 @@ io.on("connection", (socket) => {
   socket.join('001');
   rooms.set('001', rooms.get('001') || new Set());
   rooms.get('001').add(socket.id);
-  users.set(socket.id, { username: 'Guest', room: '001' });
+  users.set(socket.id, { username: 'Guest', room: '001', isAdmin: false });
   
   // Send recent messages from the default room
   const recentMessages = getRecentMessages('001');
@@ -449,7 +769,7 @@ io.on("connection", (socket) => {
     if (user) {
       user.room = formattedRoom;
     } else {
-      users.set(socket.id, { username: 'Guest', room: formattedRoom });
+      users.set(socket.id, { username: 'Guest', room: formattedRoom, isAdmin: false });
     }
     
     // Send recent messages from the new room
@@ -515,6 +835,23 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Handle admin session validation
+  socket.on("validate admin session", (sessionId) => {
+    if (validateAdminSession(socket.id, sessionId)) {
+      adminUsers.add(socket.id);
+      if (users.has(socket.id)) {
+        users.get(socket.id).isAdmin = true;
+      }
+      socket.emit("admin session valid", { valid: true });
+    } else {
+      adminUsers.delete(socket.id);
+      if (users.has(socket.id)) {
+        users.get(socket.id).isAdmin = false;
+      }
+      socket.emit("admin session valid", { valid: false });
+    }
+  });
+
   // Handle keep-alive ping from client
   socket.on("keep-alive-pong", () => {
     // Client responded to ping
@@ -528,6 +865,9 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     const user = users.get(socket.id);
     if (user) {
+      // Remove from admin users
+      adminUsers.delete(socket.id);
+      
       // Remove from room tracking
       const roomUsers = rooms.get(user.room);
       if (roomUsers) {
@@ -581,7 +921,8 @@ app.get("/api/rooms", (req, res) => {
     totalUsers: Array.from(users.keys()).length,
     rooms: roomList,
     timestamp: new Date().toISOString(),
-    keepAliveEnabled: keepAliveEnabled
+    keepAliveEnabled: keepAliveEnabled,
+    adminUsers: adminUsers.size
   });
   
   // Reset keep-alive timer when there's activity (if enabled)
@@ -628,6 +969,24 @@ app.get("/api/keep-alive-status", (req, res) => {
   });
 });
 
+// Add admin login endpoint (for alternative admin access)
+app.post("/api/admin/login", express.json(), (req, res) => {
+  const { password } = req.body;
+  
+  if (password === ADMIN_PASSWORD) {
+    // In a real app, you'd create a proper session/token
+    res.json({
+      success: true,
+      message: "Admin authentication successful (use /admin [password] in chat)"
+    });
+  } else {
+    res.status(401).json({
+      success: false,
+      message: "Invalid admin password"
+    });
+  }
+});
+
 // Serve main HTML file
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
@@ -645,15 +1004,27 @@ server.listen(PORT, () => {
   console.log(`Room-based chat system ready`);
   console.log(`Rooms available: 001-100`);
   console.log(`Messages will be stored for 6 hours`);
+  console.log(`=========================================`);
+  console.log(`ADMIN SYSTEM ACTIVE`);
+  console.log(`Default admin password: ${ADMIN_PASSWORD}`);
+  console.log(`To change password, set ADMIN_PASSWORD environment variable`);
+  console.log(`or modify the ADMIN_PASSWORD constant in server.js`);
+  console.log(`=========================================`);
+  console.log(`Admin commands in chat:`);
+  console.log(`• /admin [password] - Authenticate as admin`);
+  console.log(`• server!power!down! - Disable keep-alive`);
+  console.log(`• server!power!on - Enable keep-alive`);
+  console.log(`• server!status - Show server status`);
+  console.log(`• server!help - Show help for commands`);
+  console.log(`• server!broadcast [message] - Broadcast to all rooms`);
+  console.log(`• server!clear [room] - Clear messages in room`);
+  console.log(`• server!kick [username] - Kick user from server`);
+  console.log(`• server!users - List all connected users`);
+  console.log(`=========================================`);
   
   // Start the keep-alive mechanism
   startKeepAlive();
   console.log(`Keep-alive mechanism started (every ${KEEP_ALIVE_INTERVAL / 60000} minutes)`);
-  console.log(`Server commands available in chat:`);
-  console.log(`  • "server!power!down!" - Disable keep-alive to save instance hours`);
-  console.log(`  • "server!power!on" - Enable keep-alive to prevent shutdown`);
-  console.log(`  • "server!status" - Show server status`);
-  console.log(`  • "server!help" - Show help for server commands`);
 });
 
 // Handle graceful shutdown
@@ -671,6 +1042,4 @@ process.on('SIGINT', () => {
   stopKeepAlive();
   server.close(() => {
     console.log('Server closed');
-    process.exit(0);
-  });
-});
+    process.exit(
