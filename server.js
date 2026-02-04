@@ -28,6 +28,67 @@ app.use(express.static("public"));
 const rooms = new Map(); // roomId -> Set of socketIds
 const users = new Map(); // socketId -> {username, room}
 
+// Store messages temporarily (for 6 hours)
+const messageStore = new Map(); // roomId -> Array of {username, message, timestamp, expiresAt}
+
+// Cleanup interval to remove expired messages
+setInterval(cleanupExpiredMessages, 3600000); // Run every hour
+
+function cleanupExpiredMessages() {
+  const now = Date.now();
+  for (const [roomId, messages] of messageStore) {
+    const validMessages = messages.filter(msg => msg.expiresAt > now);
+    if (validMessages.length === 0) {
+      messageStore.delete(roomId);
+    } else {
+      messageStore.set(roomId, validMessages);
+    }
+  }
+  console.log(`Cleaned up expired messages at ${new Date().toISOString()}`);
+}
+
+function storeMessage(roomId, username, message) {
+  const timestamp = new Date().toISOString();
+  const expiresAt = Date.now() + (6 * 60 * 60 * 1000); // 6 hours from now
+  
+  if (!messageStore.has(roomId)) {
+    messageStore.set(roomId, []);
+  }
+  
+  const messages = messageStore.get(roomId);
+  messages.push({
+    username,
+    message,
+    timestamp,
+    expiresAt
+  });
+  
+  // Keep only the last 100 messages per room to prevent memory issues
+  if (messages.length > 100) {
+    messages.splice(0, messages.length - 100);
+  }
+  
+  return { username, message, timestamp, expiresAt };
+}
+
+function getRecentMessages(roomId) {
+  const now = Date.now();
+  if (!messageStore.has(roomId)) {
+    return [];
+  }
+  
+  const messages = messageStore.get(roomId)
+    .filter(msg => msg.expiresAt > now)
+    .map(({ username, message, timestamp }) => ({
+      username,
+      message,
+      timestamp,
+      room: roomId
+    }));
+  
+  return messages;
+}
+
 // Handle socket connections
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id}`);
@@ -38,6 +99,12 @@ io.on("connection", (socket) => {
   rooms.get('001').add(socket.id);
   users.set(socket.id, { username: 'Guest', room: '001' });
   
+  // Send recent messages from the default room
+  const recentMessages = getRecentMessages('001');
+  recentMessages.forEach(msg => {
+    socket.emit("chat message", msg);
+  });
+  
   socket.emit('room joined', '001');
 
   // Listen for chat messages
@@ -45,12 +112,21 @@ io.on("connection", (socket) => {
     const user = users.get(socket.id);
     if (!user) return;
     
+    const room = data.room || user.room;
+    
+    // Store the message
+    const storedMessage = storeMessage(
+      room,
+      data.username || user.username,
+      data.message
+    );
+    
     // Add username and room to data
     const messageData = {
       username: data.username || user.username,
       message: data.message,
-      room: data.room || user.room,
-      timestamp: new Date().toISOString()
+      room: room,
+      timestamp: storedMessage.timestamp
     };
     
     // Update user's username if provided
@@ -59,8 +135,8 @@ io.on("connection", (socket) => {
     }
     
     // Broadcast to users in the same room
-    io.to(messageData.room).emit("chat message", messageData);
-    console.log(`Message in room ${messageData.room}: ${messageData.username}: ${messageData.message}`);
+    io.to(room).emit("chat message", messageData);
+    console.log(`Message in room ${room}: ${messageData.username}: ${messageData.message}`);
   });
 
   // Handle room joining
@@ -113,6 +189,12 @@ io.on("connection", (socket) => {
     } else {
       users.set(socket.id, { username: 'Guest', room: formattedRoom });
     }
+    
+    // Send recent messages from the new room
+    const recentMessages = getRecentMessages(formattedRoom);
+    recentMessages.forEach(msg => {
+      socket.emit("chat message", msg);
+    });
     
     // Notify user
     socket.emit('room joined', formattedRoom);
@@ -206,6 +288,25 @@ app.get("/api/rooms", (req, res) => {
   });
 });
 
+// Add API endpoint to get message statistics
+app.get("/api/message-stats", (req, res) => {
+  const now = Date.now();
+  const roomStats = {};
+  let totalMessages = 0;
+  
+  for (const [roomId, messages] of messageStore) {
+    const validMessages = messages.filter(msg => msg.expiresAt > now);
+    roomStats[roomId] = validMessages.length;
+    totalMessages += validMessages.length;
+  }
+  
+  res.json({
+    totalMessages,
+    messagesPerRoom: roomStats,
+    cleanupRuns: Math.floor(Date.now() / 3600000) // hours since epoch
+  });
+});
+
 // Serve main HTML file
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
@@ -216,4 +317,5 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Room-based chat system ready`);
   console.log(`Rooms available: 001-100`);
+  console.log(`Messages will be stored for 6 hours`);
 });
