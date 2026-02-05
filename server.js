@@ -35,7 +35,7 @@ const messageStore = new Map(); // roomId -> Array of {username, message, timest
 // This prevents the server from shutting down due to inactivity
 const KEEP_ALIVE_INTERVAL = 14 * 60 * 1000; // 14 minutes (less than 15 to be safe)
 let keepAliveTimer = null;
-let keepAliveEnabled = true; // Start with keep-alive enabled
+let keepAliveEnabled = false; // Start with keep-alive enabled
 
 function startKeepAlive() {
   // Don't start if disabled
