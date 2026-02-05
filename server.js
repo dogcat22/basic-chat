@@ -1,11 +1,3 @@
-const express = require("express");
-const http = require("http");
-const https = require("https");
-const path = require("path");
-const { Server } = require("socket.io");
-
-const app = express();
-
 // Create HTTP server
 const server = http.createServer(app);
 
@@ -28,7 +20,6 @@ const rooms = new Map(); // roomId -> Set of socketIds
 const users = new Map(); // socketId -> {username, room}
 
 // Store messages temporarily (for 6 hours)
-const MESSAGE_TTL = 6 * 60 * 60 * 1000; // 6 hours in milliseconds
 const messageStore = new Map(); // roomId -> Array of {username, message, timestamp, expiresAt}
 
 // =================== KEEP-ALIVE MECHANISM ===================
@@ -96,6 +87,9 @@ function keepServerAlive() {
   // Option 3: Make a small HTTP request to itself
   // This works for Render.com and similar platforms
   if (keepAliveEnabled && (process.env.NODE_ENV === 'production' || process.env.RENDER)) {
+    const https = require('https');
+    const http = require('http');
+    
     const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
     
     try {
@@ -142,97 +136,22 @@ app.get("/ping", (req, res) => {
 });
 // =================== END KEEP-ALIVE MECHANISM ===================
 
-// Function to store a message
-function storeMessage(roomId, username, message) {
-  const timestamp = new Date().toISOString();
-  const expiresAt = Date.now() + MESSAGE_TTL; // Use milliseconds since epoch
-  
-  const messages = messageStore.get(roomId) || [];
-  const messageObj = { 
-    username, 
-    message, 
-    timestamp, 
-    expiresAt // Store as timestamp (number) not Date object
-  };
-  
-  messages.push(messageObj);
-  messageStore.set(roomId, messages);
-  
-  // Keep only the last 200 messages per room to prevent memory issues
-  if (messages.length > 200) {
-    messages.splice(0, messages.length - 200);
-  }
-  
-  return messageObj;
-}
-
-// Function to cleanup expired messages
-function cleanupExpiredMessages() {
-  const now = Date.now(); // Use timestamp for comparison
-  let totalRemoved = 0;
-  
-  console.log(`[${new Date().toISOString()}] Starting message cleanup...`);
-  
-  for (const [roomId, messages] of messageStore.entries()) {
-    if (!messages || messages.length === 0) continue;
-    
-    const originalLength = messages.length;
-    
-    // Filter out expired messages
-    const activeMessages = messages.filter(msg => {
-      // Check if expiresAt exists and is a valid number
-      if (!msg.expiresAt || typeof msg.expiresAt !== 'number') {
-        console.warn(`Invalid expiresAt for message in room ${roomId}:`, msg);
-        return true; // Keep messages with invalid expiresAt
-      }
-      
-      return msg.expiresAt > now;
-    });
-    
-    const removed = originalLength - activeMessages.length;
-    totalRemoved += removed;
-    
-    if (removed > 0) {
-      messageStore.set(roomId, activeMessages);
-      console.log(`Removed ${removed} expired messages from room ${roomId}`);
-    }
-  }
-  
-  if (totalRemoved > 0) {
-    console.log(`[${new Date().toISOString()}] Cleanup complete: Removed ${totalRemoved} expired messages total`);
-  }
-  
-  // Log current message counts for debugging
-  let totalMessages = 0;
-  for (const messages of messageStore.values()) {
-    totalMessages += messages.length;
-  }
-  console.log(`[${new Date().toISOString()}] Total messages stored: ${totalMessages}`);
-}
-
 // Cleanup interval to remove expired messages
 setInterval(cleanupExpiredMessages, 3600000); // Run every hour
 
-// Function to get messages for a room
-function getMessagesForRoom(roomId, limit = 50) {
-  const messages = messageStore.get(roomId) || [];
-  const now = Date.now();
-  
-  // Filter out expired messages
-  const activeMessages = messages.filter(msg => {
-    if (!msg.expiresAt || typeof msg.expiresAt !== 'number') {
-      return true; // Keep messages with invalid expiresAt
-    }
-    return msg.expiresAt > now;
+@@ -64,8 +178,8 @@
   });
-  
-  // Update store with filtered messages
-  if (activeMessages.length < messages.length) {
-    messageStore.set(roomId, activeMessages);
+
+  // Keep only the last 100 messages per room to prevent memory issues
+  if (messages.length > 100) {
+    messages.splice(0, messages.length - 100);
+  if (messages.length > 200) {
+    messages.splice(0, messages.length - 200);
   }
-  
-  // Return last 'limit' messages
-  return activeMessages.slice(-limit);
+
+  return { username, message, timestamp, expiresAt };
+@@ -89,6 +203,141 @@
+  return messages;
 }
 
 // Function to handle server commands from chat
@@ -373,16 +292,7 @@ function handleServerCommand(socket, message, user) {
 // Handle socket connections
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id}`);
-
-  // Default user info
-  users.set(socket.id, {
-    username: `Guest${Math.floor(Math.random() * 1000)}`,
-    room: null
-  });
-
-  // Handle chat messages
-  socket.on("chat message", (data) => {
-    const user = users.get(socket.id);
+@@ -113,18 +362,25 @@
     if (!user) return;
 
     const room = data.room || user.room;
@@ -398,25 +308,19 @@ io.on("connection", (socket) => {
     const storedMessage = storeMessage(
       room,
       data.username || user.username,
+      data.message
       message
     );
 
     // Add username and room to data
     const messageData = {
       username: data.username || user.username,
+      message: data.message,
       message: message,
       room: room,
       timestamp: storedMessage.timestamp
     };
-
-    // If user is in the room, broadcast to that room
-    if (user.room === room) {
-      socket.to(room).emit("chat message", messageData);
-    }
-
-    // Also send back to sender
-    socket.emit("chat message", messageData);
-
+@@ -137,6 +393,12 @@
     // Broadcast to users in the same room
     io.to(room).emit("chat message", messageData);
     console.log(`Message in room ${room}: ${messageData.username}: ${messageData.message}`);
@@ -429,53 +333,7 @@ io.on("connection", (socket) => {
   });
 
   // Handle room joining
-  socket.on("join room", (data) => {
-    const room = data.room || "001";
-    const formattedRoom = room.padStart(3, "0");
-    
-    // Leave current room if any
-    const user = users.get(socket.id);
-    if (user && user.room) {
-      const currentRoom = rooms.get(user.room);
-      if (currentRoom) {
-        currentRoom.delete(socket.id);
-        if (currentRoom.size === 0) {
-          rooms.delete(user.room);
-        }
-      }
-      socket.leave(user.room);
-    }
-
-    // Join new room
-    socket.join(formattedRoom);
-    
-    if (!rooms.has(formattedRoom)) {
-      rooms.set(formattedRoom, new Set());
-    }
-    rooms.get(formattedRoom).add(socket.id);
-
-    // Update user info
-    if (user) {
-      user.room = formattedRoom;
-      user.username = data.username || user.username;
-      users.set(socket.id, user);
-    }
-
-    // Get previous messages for the room
-    const previousMessages = getMessagesForRoom(formattedRoom);
-
-    // Send room info and previous messages to the user
-    socket.emit("room joined", {
-      room: formattedRoom,
-      username: user.username,
-      userCount: rooms.get(formattedRoom).size,
-      previousMessages: previousMessages
-    });
-
-    // Notify others in the room
-    socket.to(formattedRoom).emit("user joined", {
-      username: user.username,
-      userCount: rooms.get(formattedRoom).size
+@@ -206,6 +468,12 @@
     });
 
     console.log(`User ${socket.id} joined room ${formattedRoom}`);
@@ -488,27 +346,7 @@ io.on("connection", (socket) => {
   });
 
   // Handle leaving a room
-  socket.on("leave room", (roomId) => {
-    const user = users.get(socket.id);
-    if (user && user.room === roomId) {
-      socket.leave(roomId);
-      
-      const room = rooms.get(roomId);
-      if (room) {
-        room.delete(socket.id);
-        if (room.size === 0) {
-          rooms.delete(roomId);
-        } else {
-          // Notify remaining users
-          socket.to(roomId).emit("user left", {
-            username: user.username,
-            userCount: room.size
-          });
-        }
-      }
-      
-      user.room = null;
-      users.set(socket.id, user);
+@@ -224,6 +492,12 @@
 
       socket.emit('room left', roomId);
       console.log(`User ${socket.id} left room ${roomId}`);
@@ -521,8 +359,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Handle username change
-  socket.on("change username", (username) => {
+@@ -232,6 +506,21 @@
     const user = users.get(socket.id);
     if (user) {
       user.username = username || 'Guest';
@@ -544,35 +381,9 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Handle disconnection
-  socket.on("disconnect", () => {
-    const user = users.get(socket.id);
-    if (user && user.room) {
-      const room = rooms.get(user.room);
-      if (room) {
-        room.delete(socket.id);
-        if (room.size === 0) {
-          rooms.delete(user.room);
-        } else {
-          // Notify remaining users
-          socket.to(user.room).emit("user left", {
-            username: user.username,
-            userCount: room.size
-          });
-        }
-      }
-    }
-    
-    users.delete(socket.id);
-    console.log(`User disconnected: ${socket.id}`);
-  });
-
-  // Handle request for room list
-  socket.on("get rooms", () => {
-    const roomList = Array.from(rooms.entries()).map(([room, users]) => ({
-      room,
-      userCount: users.size
-    }));
+@@ -270,6 +559,12 @@
+        userCount: rooms.get(room).size
+      }));
     socket.emit('rooms list', roomList);
     
     // Reset keep-alive timer when there's activity (if enabled)
@@ -583,16 +394,11 @@ io.on("connection", (socket) => {
   });
 });
 
-// API endpoint to get current rooms and users
-app.get("/api/rooms", (req, res) => {
-  const roomList = Array.from(rooms.entries()).map(([room, users]) => ({
-    room,
-    userCount: users.size
-  }));
-  
+@@ -284,8 +579,16 @@
   res.json({
     totalRooms: roomList.length,
     totalUsers: Array.from(users.keys()).length,
+    rooms: roomList
     rooms: roomList,
     timestamp: new Date().toISOString(),
     keepAliveEnabled: keepAliveEnabled
@@ -606,18 +412,11 @@ app.get("/api/rooms", (req, res) => {
 });
 
 // Add API endpoint to get message statistics
-app.get("/api/message-stats", (req, res) => {
-  const roomStats = {};
-  let totalMessages = 0;
-  
-  for (const [roomId, messages] of messageStore.entries()) {
-    roomStats[roomId] = messages.length;
-    totalMessages += messages.length;
-  }
-  
+@@ -303,13 +606,37 @@
   res.json({
     totalMessages,
     messagesPerRoom: roomStats,
+    cleanupRuns: Math.floor(Date.now() / 3600000) // hours since epoch
     cleanupRuns: Math.floor(Date.now() / 3600000), // hours since epoch
     timestamp: new Date().toISOString(),
     keepAliveEnabled: keepAliveEnabled
@@ -652,8 +451,7 @@ app.get("/", (req, res) => {
 });
 
 // Start server
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+@@ -318,4 +645,32 @@
   console.log(`Room-based chat system ready`);
   console.log(`Rooms available: 001-100`);
   console.log(`Messages will be stored for 6 hours`);
