@@ -19,8 +19,19 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 
 // ================== REDIS SETUP ==================
+const redisUrl = process.env.REDIS_URL;
+
+if (!redisUrl) {
+  console.error("❌ REDIS_URL is not set");
+  process.exit(1);
+}
+
 const redis = createClient({
-  url: process.env.REDIS_URL
+  url: redisUrl,
+  socket: {
+    tls: true,
+    rejectUnauthorized: false
+  }
 });
 
 redis.on("error", (err) => {
@@ -28,8 +39,13 @@ redis.on("error", (err) => {
 });
 
 (async () => {
-  await redis.connect();
-  console.log("✅ Connected to Redis");
+  try {
+    await redis.connect();
+    console.log("✅ Connected to Redis (Upstash)");
+  } catch (err) {
+    console.error("❌ Redis connection failed:", err);
+    process.exit(1);
+  }
 })();
 
 // ================== STATIC FILES ==================
