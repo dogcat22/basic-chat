@@ -1,384 +1,990 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Basic Chat with Rooms</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 20px;
-      background-color: #f5f5f5;
-    }
-    h2 {
-      color: #333;
-      border-bottom: 2px solid #4CAF50;
-      padding-bottom: 10px;
-    }
-    .room-controls {
-      background: white;
-      padding: 15px;
-      border-radius: 5px;
-      margin-bottom: 20px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    .room-info {
-      background: #e8f4f8;
-      padding: 10px;
-      border-radius: 5px;
-      margin: 10px 0;
-    }
-    .current-room {
-      font-weight: bold;
-      color: #2196F3;
-      font-size: 1.2em;
-    }
-    input, button, select {
-      padding: 10px;
-      margin: 5px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 14px;
-    }
-    input[type="text"] {
-      width: 150px;
-    }
-    #message {
-      width: 300px;
-    }
-    button {
-      background-color: #4CAF50;
-      color: white;
-      border: none;
-      cursor: pointer;
-      transition: background-color 0.3s;
-    }
-    button:hover {
-      background-color: #45a049;
-    }
-    button.secondary {
-      background-color: #2196F3;
-    }
-    button.secondary:hover {
-      background-color: #1976D2;
-    }
-    #messages {
-      list-style-type: none;
-      padding: 0;
-      max-height: 400px;
-      overflow-y: auto;
-      background: white;
-      border-radius: 5px;
-      padding: 15px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    #messages li {
-      padding: 10px;
-      margin: 5px 0;
-      border-bottom: 1px solid #eee;
-    }
-    #messages li.system {
-      color: #666;
-      font-style: italic;
-      font-size: 0.9em;
-    }
-    #messages li:last-child {
-      border-bottom: none;
-    }
-    .status {
-      padding: 10px;
-      margin: 10px 0;
-      border-radius: 4px;
-      font-weight: bold;
-    }
-    .connected {
-      background-color: #d4edda;
-      color: #155724;
-      border: 1px solid #c3e6cb;
-    }
-    .disconnected {
-      background-color: #f8d7da;
-      color: #721c24;
-      border: 1px solid #f5c6cb;
-    }
-    .controls {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      margin: 15px 0;
-    }
-    .room-stats {
-      margin-top: 20px;
-      padding: 15px;
-      background: white;
-      border-radius: 5px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    .room-stats h3 {
-      margin-top: 0;
-      color: #333;
-    }
-  </style>
+    <title>Home-Classroom</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #1a2a6c, #2a3c7f);
+            color: #fff;
+            min-height: 100vh;
+        }
+        
+        #chat-container {
+            background-color: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+        
+        h2 {
+            color: #4facfe;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            color: #b0c4ff;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        #messages {
+            height: 400px;
+            overflow-y: auto;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            padding: 15px;
+            margin-bottom: 15px;
+            background:a rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+        }
+        
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 8px;
+            word-break: break-word;
+        }
+        
+        .message.system {
+            color: #b0c4ff;
+            font-style: italic;
+            background: rgba(79, 172, 254, 0.1);
+            border-left: 4px solid #4facfe;
+        }
+        
+        .message.user {
+            background: rgba(0, 242, 254, 0.15);
+            border-left: 4px solid #00f2fe;
+        }
+        
+        .message.encrypted {
+            background: rgba(255, 255, 255, 0.05);
+            border-left: 4px solid #ff6b6b;
+            color: #ff9e9e;
+        }
+        
+        .message.decrypted {
+            background: rgba(50, 255, 100, 0.1);
+            border-left: 4px solid #32ff64;
+        }
+        
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+        
+        .username {
+            font-weight: bold;
+            color: #4facfe;
+        }
+        
+        .message-time {
+            color: #a0b9ff;
+            font-size: 0.8em;
+            margin-left: 10px;
+        }
+        
+        .message-status {
+            color: #a0b9ff;
+            font-size: 0.8em;
+        }
+        
+        .old-message {
+            opacity: 0.8;
+            border-left: 4px solid #888 !important;
+        }
+        
+        .old-message .message-time {
+            color: #888;
+        }
+        
+        input, button, select {
+            padding: 12px;
+            margin: 5px;
+            border-radius: 8px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            background: rgba(0, 0, 0, 0.2);
+            color: #fff;
+            font-size: 14px;
+        }
+        
+        input:focus, button:focus, select:focus {
+            outline: none;
+            border-color: #4facfe;
+            box-shadow: 0 0 0 2px rgba(79, 172, 254, 0.3);
+        }
+        
+        #messageInput {
+            width: 300px;
+        }
+        
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 15px;
+            gap: 10px;
+        }
+        
+        .encryption-controls {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .encryption-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .status-dot.encrypted {
+            background-color: #32ff64;
+            box-shadow: 0 0 8px #32ff64;
+        }
+        
+        .status-dot.unencrypted {
+            background-color: #ff6b6b;
+            box-shadow: 0 0 8px #ff6b6b;
+        }
+        
+        button {
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            color: #1a2a6c;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        button.secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 1px solid #4facfe;
+        }
+        
+        #encryptionKey {
+            width: 250px;
+        }
+        
+        .status {
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        
+        .connected { 
+            background: rgba(50, 255, 100, 0.2); 
+            color: #32ff64; 
+            border-left: 5px solid #32ff64;
+        }
+        
+        .disconnected { 
+            background: rgba(255, 50, 50, 0.2); 
+            color: #ff6b6b; 
+            border-left: 5px solid #ff6b6b;
+        }
+        
+        .room-info {
+            background: rgba(79, 172, 254, 0.15);
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 10px;
+        }
+        
+        .room-number {
+            font-weight: bold;
+            color: #00f2fe;
+            font-size: 1.2em;
+        }
+        
+        .instructions {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+        
+        .instructions h3 {
+            color: #a0b9ff;
+            margin-bottom: 10px;
+        }
+        
+        .instructions ul {
+            padding-left: 20px;
+            margin-bottom: 10px;
+        }
+        
+        .instructions li {
+            margin-bottom: 8px;
+        }
+        
+        .copy-btn {
+            background: rgba(255, 255, 255, 0.1);
+            color: #4facfe;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.8em;
+            cursor: pointer;
+            border: 1px solid rgba(79, 172, 254, 0.5);
+            margin-left: 10px;
+        }
+        
+        .copy-btn:hover {
+            background: rgba(79, 172, 254, 0.2);
+        }
+        
+        .key-status {
+            display: inline-block;
+            margin-left: 10px;
+            font-size: 0.9em;
+        }
+        
+        .key-status.valid {
+            color: #32ff64;
+        }
+        
+        .key-status.invalid {
+            color: #ff6b6b;
+        }
+        
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            input, button, select {
+                margin: 5px 0;
+                width: 100%;
+            }
+            
+            #messageInput {
+                width: 100%;
+            }
+            
+            #encryptionKey {
+                width: 100%;
+            }
+        }
+    </style>
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-  <h2>Basic Chat with Rooms</h2>
-  
-  <div class="room-controls">
-    <h3>Room Controls</h3>
-    <div class="room-info">
-      Current Room: <span class="current-room" id="currentRoom">001</span>
-      | Users in room: <span id="roomUserCount">1</span>
-    </div>
-    
-    <div class="controls">
-      <input type="text" id="username" placeholder="Username" value="Guest" />
-      <input type="text" id="roomInput" placeholder="Room (001-100)" value="001" maxlength="3" />
-      <button onclick="joinRoom()" class="secondary">Join Room</button>
-      
-      <select id="roomSelect" onchange="changeRoom(this.value)">
-        <option value="">Quick Select</option>
-        <option value="001" selected>Room 001 (Main)</option>
-        <option value="002">Room 002</option>
-        <option value="003">Room 003</option>
-        <option value="010">Room 010</option>
-        <option value="050">Room 050</option>
-        <option value="100">Room 100</option>
-      </select>
-      
-      <button onclick="getRoomStats()">Refresh Stats</button>
-    </div>
-  </div>
-  
-  <div class="status disconnected" id="status">
-    Status: Connecting...
-  </div>
-  
-  <ul id="messages"></ul>
-  
-  <div class="controls">
-    <input id="message" placeholder="Type your message here..." onkeypress="handleEnter(event)" />
-    <button onclick="send()">Send Message</button>
-    <button onclick="clearMessages()" style="background-color: #f44336;">Clear Chat</button>
-  </div>
-  
-  <div class="room-stats">
-    <h3>Room Statistics</h3>
-    <div id="roomStats">Loading statistics...</div>
-  </div>
-  
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
-    let socket;
-    let currentRoom = '001';
-    let roomUsers = new Map(); // Track users per room
-    
-    function initConnection() {
-      socket = io();
-      
-      socket.on("connect", () => {
-        console.log("Connected to server");
-        document.getElementById("status").textContent = "Status: Connected";
-        document.getElementById("status").className = "status connected";
-        addSystemMessage("Connected to chat server");
+    <div id="chat-container">
+        <h2><i class="fas fa-lock"></i> Classroom</h2>
+        <p class="subtitle">Messages are encrypted before sending and decrypted only on recipient's device</p>
         
-        // Join default room
-        joinRoom(currentRoom);
-      });
-      
-      socket.on("disconnect", () => {
-        console.log("Disconnected from server");
-        document.getElementById("status").textContent = "Status: Disconnected";
-        document.getElementById("status").className = "status disconnected";
-        addSystemMessage("Disconnected from server");
-      });
-      
-      socket.on("chat message", (data) => {
-        // Only show messages for current room
-        if (data.room === currentRoom) {
-          addMessage(data.username, data.message);
+        <div class="room-info">
+            <p>Current Room: <span class="room-number" id="roomDisplay">001</span></p>
+            <p>Each room (001-100) provides separate, private chat spaces.</p>
+            <p><small><i class="fas fa-clock"></i> Messages are stored for 6 hours</small></p>
+        </div>
+        
+        <div class="status disconnected" id="status">
+            <i class="fas fa-spinner fa-spin"></i> Status: Connecting...
+        </div>
+        
+        <div class="encryption-controls">
+            <div class="encryption-status">
+                <span class="status-dot unencrypted" id="encryptionStatusDot"></span>
+                <span id="encryptionStatusText">Encryption: OFF</span>
+            </div>
+            
+            <div class="controls">
+                <input type="password" id="encryptionKey" placeholder="Enter Encryption Key (Share Securely)">
+                <button onclick="toggleKeyVisibility()" class="secondary">
+                    <i class="fas fa-eye" id="keyVisibilityIcon"></i>
+                </button>
+                <button onclick="generateRandomKey()" class="secondary">
+                    <i class="fas fa-key"></i> Generate Key
+                </button>
+
+                <button onclick="reloadMessagesWithCurrentKey()" class="secondary">
+                    <i class="fas fa-redo"></i> Decrypt Stored Messages
+                </button>
+                <span id="keyStatus" class="key-status"></span>
+            </div>
+            
+            <small style="color: #b0c4ff; display: block; margin-top: 10px;">
+                <i class="fas fa-info-circle"></i> Share this key with your chat partner IN PERSON. Messages are encrypted with this key before being sent over the network.
+            </small>
+        </div>
+        
+        <div class="controls">
+            <input type="text" id="username" placeholder="Username" value="User">
+            <input type="text" id="roomInput" placeholder="Room (001-100)" value="001" maxlength="3">
+            <button onclick="joinRoom()">
+                <i class="fas fa-sign-in-alt"></i> Join Room
+            </button>
+            
+            <select id="roomSelect" onchange="changeRoom(this.value)">
+                <option value="">Quick Rooms</option>
+                <option value="001" selected>Room 001 (Public)</option>
+                <option value="002">Room 002</option>
+                <option value="003">Room 003</option>
+                <option value="010">Room 010</option>
+                <option value="050">Room 050</option>
+                <option value="100">Room 100</option>
+            </select>
+        </div>
+        
+        <div id="messages"></div>
+        
+        <div class="controls">
+            <input type="text" id="messageInput" placeholder="Type your message..." onkeypress="handleEnter(event)">
+            <button onclick="sendMessage()">
+                <i class="fas fa-paper-plane"></i> Send
+            </button>
+            <button onclick="clearMessages()" class="secondary">
+                <i class="fas fa-trash"></i> Clear Chat
+            </button>
+        </div>
+        
+        <div class="instructions">
+            <h3><i class="fas fa-shield-alt"></i> How End-to-End Encryption Works</h3>
+            <ul>
+                <li><strong>Share Key Securely:</strong> Meet in person to exchange encryption keys</li>
+                <li><strong>Encryption:</strong> Messages are encrypted on YOUR device before sending</li>
+                <li><strong>Transmission:</strong> Only encrypted data travels over the internet</li>
+                <li><strong>Decryption:</strong> Messages are decrypted on RECIPIENT'S device</li>
+                <li><strong>Security:</strong> Even if intercepted, messages cannot be read without the key</li>
+                <li><strong>Warning:</strong> If you lose the key, you cannot decrypt messages</li>
+                <li><strong>New Feature:</strong> Messages are stored for 6 hours - you can join rooms later and still see recent messages!</li>
+                <li><strong>Tip:</strong> Use "Decrypt Stored Messages" button if you enter a key after joining a room</li>
+            </ul>
+            <p><strong>Note:</strong> This tool runs entirely in your browser. No encryption keys or unencrypted messages are ever sent to the server.</p>
+        </div>
+    </div>
+    
+    <!-- Socket.IO from CDN -->
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    
+    <script>
+        // Chat variables
+        let socket;
+        let currentRoom = '001';
+        let isEncryptionEnabled = false;
+        let encryptionKey = '';
+        
+        // Initialize connection
+        function initSocket() {
+            socket = io('https://basic-chat-780m.onrender.com', {
+                transports: ['websocket', 'polling']
+            });
+            
+            const status = document.getElementById('status');
+            const messagesDiv = document.getElementById('messages');
+            
+            // Connection events
+            socket.on('connect', () => {
+                console.log('Connected to server!');
+                status.innerHTML = '<i class="fas fa-check-circle"></i> Status: Connected';
+                status.className = 'status connected';
+                addSystemMessage('Connected to chat server');
+                
+                // Join default room
+                joinRoom(currentRoom);
+            });
+            
+            socket.on('disconnect', () => {
+                console.log('Disconnected from server');
+                status.innerHTML = '<i class="fas fa-times-circle"></i> Status: Disconnected';
+                status.className = 'status disconnected';
+                addSystemMessage('Disconnected from server');
+            });
+            
+            socket.on('connect_error', (error) => {
+                console.error('Connection error:', error);
+                status.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Status: Connection Failed';
+                status.className = 'status disconnected';
+                addSystemMessage('Failed to connect to server');
+            });
+            
+            // Handle incoming chat messages
+            socket.on('chat message', async (data) => {
+                // Only show messages for current room
+                if (data.room === currentRoom) {
+                    // Try to decrypt if we have a key
+                    if (encryptionKey && data.message) {
+                        try {
+                            // Check if message looks like base64 (likely encrypted)
+                            if (isValidBase64(data.message)) {
+                                const decrypted = await decryptText(data.message, encryptionKey);
+                                addChatMessage(data.username, decrypted, true, data.timestamp);
+                                return;
+                            }
+                        } catch (error) {
+                            // Decryption failed, show encrypted message
+                            console.log('Decryption failed, showing encrypted message');
+                        }
+                    }
+                    // Show as-is (either not encrypted or we don't have the key)
+                    addChatMessage(data.username, data.message, false, data.timestamp);
+                }
+            });
+            
+            // Handle room join confirmation
+            socket.on('room joined', (room) => {
+                addSystemMessage(`Joined room: ${room}`);
+                addSystemMessage('Loading recent messages from the last 6 hours...');
+                
+                // Auto-decrypt after messages load if we have a key
+                if (encryptionKey) {
+                    setTimeout(() => reloadMessagesWithCurrentKey(), 1500);
+                }
+            });
+            
+            // Handle room leave confirmation
+            socket.on('room left', (room) => {
+                addSystemMessage(`Left room: ${room}`);
+            });
+            
+            // Handle user join/leave notifications
+            socket.on('user joined', (data) => {
+                if (data.room === currentRoom) {
+                    addSystemMessage(`${data.username} joined the room`);
+                }
+            });
+            
+            socket.on('user left', (data) => {
+                if (data.room === currentRoom) {
+                    addSystemMessage(`${data.username} left the room`);
+                }
+            });
         }
-      });
-      
-      socket.on("room joined", (room) => {
-        currentRoom = room;
-        document.getElementById("currentRoom").textContent = room;
-        document.getElementById("roomInput").value = room;
-        addSystemMessage(`Joined room: ${room}`);
-        updateRoomSelect(room);
-      });
-      
-      socket.on("room left", (room) => {
-        addSystemMessage(`Left room: ${room}`);
-      });
-      
-      socket.on("user joined", (data) => {
-        if (data.room === currentRoom) {
-          addSystemMessage(`${data.username} joined the room`);
-          updateUserCount();
+        
+        // Format timestamp for display
+        function formatTimestamp(timestamp) {
+            if (!timestamp) return '';
+            
+            try {
+                const date = new Date(timestamp);
+                const now = new Date();
+                const diffMs = now - date;
+                const diffHours = diffMs / (1000 * 60 * 60);
+                
+                // If message is less than 24 hours old, show time
+                if (diffHours < 24) {
+                    return date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                } else {
+                    // Otherwise show date and time
+                    return date.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ' ' + 
+                           date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                }
+            } catch (error) {
+                console.error('Error formatting timestamp:', error);
+                return '';
+            }
         }
-      });
-      
-      socket.on("user left", (data) => {
-        if (data.room === currentRoom) {
-          addSystemMessage(`${data.username} left the room`);
-          updateUserCount();
+        
+        // Check if message is "old" (more than 1 hour)
+        function isOldMessage(timestamp) {
+            if (!timestamp) return false;
+            
+            try {
+                const messageTime = new Date(timestamp);
+                const now = new Date();
+                const diffHours = (now - messageTime) / (1000 * 60 * 60);
+                return diffHours > 1; // More than 1 hour old
+            } catch (error) {
+                return false;
+            }
         }
-      });
-      
-      socket.on("rooms list", (rooms) => {
-        updateRoomStats(rooms);
-      });
-      
-      socket.on("error", (message) => {
-        alert(`Error: ${message}`);
-      });
-    }
-    
-    function joinRoom() {
-      const roomInput = document.getElementById("roomInput");
-      let room = roomInput.value.trim().padStart(3, '0');
-      
-      // Validate room number
-      if (!/^\d{3}$/.test(room)) {
-        alert('Please enter a valid room number (001-100)');
-        return;
-      }
-      
-      const roomNum = parseInt(room);
-      if (roomNum < 1 || roomNum > 100) {
-        alert('Room number must be between 001 and 100');
-        return;
-      }
-      
-      room = roomNum.toString().padStart(3, '0');
-      
-      // Update username first
-      const username = document.getElementById("username").value.trim();
-      if (username) {
-        socket.emit("update username", username);
-      }
-      
-      // Join the new room
-      socket.emit("join room", room);
-    }
-    
-    function changeRoom(room) {
-      if (!room) return;
-      document.getElementById("roomInput").value = room;
-      joinRoom();
-    }
-    
-    function updateRoomSelect(room) {
-      const select = document.getElementById("roomSelect");
-      for (let option of select.options) {
-        option.selected = option.value === room;
-      }
-    }
-    
-    function send() {
-      const username = document.getElementById("username").value.trim();
-      const messageInput = document.getElementById("message");
-      const message = messageInput.value.trim();
-      
-      if (!username) {
-        alert('Please enter a username');
-        return;
-      }
-      
-      if (!message) {
-        alert('Please enter a message');
-        return;
-      }
-      
-      socket.emit("chat message", {
-        username: username,
-        message: message,
-        room: currentRoom
-      });
-      
-      messageInput.value = "";
-      messageInput.focus();
-    }
-    
-    function handleEnter(event) {
-      if (event.key === "Enter") {
-        send();
-      }
-    }
-    
-    function addMessage(username, message) {
-      const li = document.createElement("li");
-      li.textContent = `${username}: ${message}`;
-      document.getElementById("messages").appendChild(li);
-      scrollToBottom();
-    }
-    
-    function addSystemMessage(message) {
-      const li = document.createElement("li");
-      li.className = "system";
-      li.textContent = `[System] ${message}`;
-      document.getElementById("messages").appendChild(li);
-      scrollToBottom();
-    }
-    
-    function clearMessages() {
-      document.getElementById("messages").innerHTML = "";
-    }
-    
-    function scrollToBottom() {
-      const messagesDiv = document.getElementById("messages");
-      messagesDiv.scrollTop = messagesDiv.scrollHeight;
-    }
-    
-    function getRoomStats() {
-      socket.emit("get rooms");
-    }
-    
-    function updateRoomStats(rooms) {
-      const statsDiv = document.getElementById("roomStats");
-      let html = `<p>Total active rooms: ${rooms.length}</p>`;
-      html += "<ul>";
-      rooms.forEach(room => {
-        html += `<li>Room ${room.id}: ${room.userCount} user(s)</li>`;
-        if (room.id === currentRoom) {
-          document.getElementById("roomUserCount").textContent = room.userCount;
+        
+        // Function to reload all messages with current encryption key
+        async function reloadMessagesWithCurrentKey() {
+            if (!encryptionKey) {
+                addSystemMessage('No encryption key entered. Old encrypted messages cannot be decrypted.');
+                return;
+            }
+                        
+            const messagesDiv = document.getElementById('messages');
+            const messages = messagesDiv.querySelectorAll('.message.encrypted, .message.decrypted, .message.user');
+            
+            let decryptedCount = 0;
+            let failedCount = 0;
+            
+            for (const messageDiv of messages) {
+                // Get the message content
+                const messageContentDiv = messageDiv.querySelector('div:last-child');
+                if (!messageContentDiv) continue;
+                
+                const originalText = messageContentDiv.textContent;
+                
+                // Only try to decrypt if it looks like base64 (encrypted)
+                if (isValidBase64(originalText)) {
+                    try {
+                        const decrypted = await decryptText(originalText, encryptionKey);
+                        messageContentDiv.textContent = decrypted;
+                        
+                        // Update message styling
+                        messageDiv.className = 'message decrypted';
+                        const statusSpan = messageDiv.querySelector('.message-status');
+                        if (statusSpan) {
+                            statusSpan.innerHTML = '<i class="fas fa-lock-open"></i> Decrypted';
+                        }
+                        
+                        decryptedCount++;
+                    } catch (error) {
+                        failedCount++;
+                    }
+                }
+            }
+            
+            if (decryptedCount > 0) {
+                addSystemMessage(`Successfully decrypted ${decryptedCount} message(s) with current key.`);
+            }
+            
+          
         }
-      });
-      html += "</ul>";
-      statsDiv.innerHTML = html;
-    }
-    
-    function updateUserCount() {
-      // Request updated room stats
-      getRoomStats();
-    }
-    
-    // Initialize connection when page loads
-    document.addEventListener("DOMContentLoaded", function() {
-      initConnection();
-      
-      // Set up room input validation
-      const roomInput = document.getElementById("roomInput");
-      roomInput.addEventListener("keypress", function(event) {
-        if (event.key === "Enter") {
-          joinRoom();
+        
+        // Encryption functions with random salt and IV
+        async function encryptText(text, password) {
+            // Generate RANDOM salt (16 bytes)
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            
+            // Generate RANDOM IV (12 bytes for AES-GCM)
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            
+            // Convert password to key using PBKDF2
+            const keyMaterial = await crypto.subtle.importKey(
+                "raw",
+                new TextEncoder().encode(password),
+                { name: "PBKDF2" },
+                false,
+                ["deriveKey"]
+            );
+            
+            const key = await crypto.subtle.deriveKey(
+                {
+                    name: "PBKDF2",
+                    salt: salt,
+                    iterations: 100000,
+                    hash: "SHA-256"
+                },
+                keyMaterial,
+                { name: "AES-GCM", length: 256 },
+                false,
+                ["encrypt"]
+            );
+            
+            // Encrypt with random IV
+            const encodedText = new TextEncoder().encode(text);
+            const encryptedContent = await crypto.subtle.encrypt(
+                {
+                    name: "AES-GCM",
+                    iv: iv
+                },
+                key,
+                encodedText
+            );
+            
+            // Combine salt, iv, and encrypted data
+            const encryptedArray = new Uint8Array(encryptedContent);
+            const combined = new Uint8Array(salt.length + iv.length + encryptedArray.length);
+            combined.set(salt);
+            combined.set(iv, salt.length);
+            combined.set(encryptedArray, salt.length + iv.length);
+            
+            return btoa(String.fromCharCode.apply(null, combined));
         }
-      });
-      
-      // Only allow numbers
-      roomInput.addEventListener("input", function() {
-        this.value = this.value.replace(/[^0-9]/g, '');
-        if (this.value.length > 3) {
-          this.value = this.value.slice(0, 3);
+        
+        async function decryptText(encryptedBase64, password) {
+            try {
+                // Convert base64 back to binary
+                const combined = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+                
+                // Extract salt (first 16 bytes), iv (next 12 bytes), and encrypted data
+                const salt = combined.slice(0, 16);
+                const iv = combined.slice(16, 28);
+                const encryptedData = combined.slice(28);
+                
+                // Convert password to key using PBKDF2
+                const keyMaterial = await crypto.subtle.importKey(
+                    "raw",
+                    new TextEncoder().encode(password),
+                    { name: "PBKDF2" },
+                    false,
+                    ["deriveKey"]
+                );
+                
+                const key = await crypto.subtle.deriveKey(
+                    {
+                        name: "PBKDF2",
+                        salt: salt,
+                        iterations: 100000,
+                        hash: "SHA-256"
+                    },
+                    keyMaterial,
+                    { name: "AES-GCM", length: 256 },
+                    false,
+                    ["decrypt"]
+                );
+                
+                // Decrypt with extracted IV
+                const decryptedContent = await crypto.subtle.decrypt(
+                    {
+                        name: "AES-GCM",
+                        iv: iv
+                    },
+                    key,
+                    encryptedData
+                );
+                
+                return new TextDecoder().decode(decryptedContent);
+                
+            } catch (error) {
+                throw new Error("Decryption failed. Wrong key or not encrypted.");
+            }
         }
-      });
-      
-      // Focus on message input
-      document.getElementById("message").focus();
-      
-      // Load room stats every 30 seconds
-      setInterval(getRoomStats, 30000);
-    });
-  </script>
+        
+        // Helper function to check if a string is valid base64
+        function isValidBase64(str) {
+            // First check if it's base64 format
+            const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+            if (!base64Regex.test(str)) {
+                return false;
+            }
+            
+            try {
+                // Decode and check minimum length (salt + iv = 28 bytes minimum)
+                const decoded = atob(str);
+                const minLength = 28; // 16 bytes salt + 12 bytes IV
+                
+                if (decoded.length < minLength) {
+                    return false;
+                }
+                
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+        
+        // Update encryption status UI
+        function updateEncryptionStatus() {
+            const encryptionKeyInput = document.getElementById('encryptionKey');
+            const oldKey = encryptionKey;
+            encryptionKey = encryptionKeyInput.value.trim();
+            isEncryptionEnabled = encryptionKey.length > 0;
+            
+            const statusDot = document.getElementById('encryptionStatusDot');
+            const statusText = document.getElementById('encryptionStatusText');
+            const keyStatus = document.getElementById('keyStatus');
+            
+            if (isEncryptionEnabled) {
+                statusDot.className = 'status-dot encrypted';
+                statusText.textContent = 'Encryption: ON (AES-256)';
+                statusText.style.color = '#32ff64';
+                keyStatus.textContent = '✓ Key loaded';
+                keyStatus.className = 'key-status valid';
+                
+                // Auto-decrypt stored messages when a new key is entered
+                // Only if key changed and we have messages displayed
+                if (oldKey !== encryptionKey) {
+                    setTimeout(() => reloadMessagesWithCurrentKey(), 500);
+                }
+            } else {
+                statusDot.className = 'status-dot unencrypted';
+                statusText.textContent = 'Encryption: OFF (Messages sent in plain text)';
+                statusText.style.color = '#ff6b6b';
+                keyStatus.textContent = '⚠ No encryption key';
+                keyStatus.className = 'key-status invalid';
+            }
+        }
+        
+        // Room functions
+        function joinRoom() {
+            const roomInput = document.getElementById('roomInput');
+            let room = roomInput.value.trim().padStart(3, '0');
+            
+            // Validate room number
+            if (!/^\d{3}$/.test(room)) {
+                alert('Please enter a valid room number (001-100)');
+                return;
+            }
+            
+            const roomNum = parseInt(room);
+            if (roomNum < 1 || roomNum > 100) {
+                alert('Room number must be between 001 and 100');
+                return;
+            }
+            
+            // Format to 3 digits
+            room = roomNum.toString().padStart(3, '0');
+            
+            // Leave current room if different
+            if (room !== currentRoom && socket.connected) {
+                socket.emit('leave room', currentRoom);
+            }
+            
+            // Update current room
+            currentRoom = room;
+            
+            // Update display
+            document.getElementById('roomDisplay').textContent = room;
+            document.getElementById('roomInput').value = room;
+            
+            // Clear messages
+            clearMessages();
+            
+            // Join new room
+            if (socket.connected) {
+                socket.emit('join room', room);
+                addSystemMessage(`Switched to room: ${room}`);
+                addSystemMessage(isEncryptionEnabled ? 
+                    'Encryption is enabled. Messages will be encrypted before sending.' :
+                    'Warning: Encryption is not enabled. Messages will be sent in plain text.');
+            }
+        }
+        
+        function changeRoom(room) {
+            if (!room) return;
+            document.getElementById('roomInput').value = room;
+            joinRoom();
+        }
+        
+        // Message sending with encryption
+        async function sendMessage() {
+            const username = document.getElementById('username').value.trim();
+            const messageInput = document.getElementById('messageInput');
+            let message = messageInput.value.trim();
+            
+            if (!username) {
+                alert('Please enter a username');
+                return;
+            }
+            
+            if (!message) {
+                alert('Please enter a message');
+                return;
+            }
+            
+            if (!socket || !socket.connected) {
+                alert('Not connected to server');
+                return;
+            }
+            
+            let finalMessage = message;
+            let wasEncrypted = false;
+            
+            // Encrypt if we have a key
+            if (isEncryptionEnabled && encryptionKey) {
+                try {
+                    finalMessage = await encryptText(message, encryptionKey);
+                    wasEncrypted = true;
+                } catch (error) {
+                    console.error('Encryption error:', error);
+                    alert('Encryption failed. Sending as plain text.');
+                }
+            }
+            
+            // Send to server with room info
+            socket.emit('chat message', {
+                username: username,
+                message: finalMessage,
+                room: currentRoom
+            });
+            
+            // Clear input
+            messageInput.value = '';
+            messageInput.focus();
+        }
+        
+        function handleEnter(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+        
+        function addChatMessage(username, message, wasDecrypted, timestamp) {
+            const messageDiv = document.createElement('div');
+            messageDiv.dataset.timestamp = timestamp || new Date().toISOString();
+            
+            // Determine message class based on encryption status
+            if (wasDecrypted) {
+                messageDiv.className = 'message decrypted';
+            } else if (message && isValidBase64(message) && encryptionKey) {
+                messageDiv.className = 'message encrypted';
+                messageDiv.dataset.encrypted = 'true';
+            } else {
+                messageDiv.className = 'message user';
+            }
+            
+            // Add "old-message" class if message is older than 1 hour
+            if (timestamp && isOldMessage(timestamp)) {
+                messageDiv.className += ' old-message';
+            }
+            
+            const messageHeader = document.createElement('div');
+            messageHeader.className = 'message-header';
+            
+            const userInfoSpan = document.createElement('span');
+            
+            const usernameSpan = document.createElement('span');
+            usernameSpan.className = 'username';
+            usernameSpan.textContent = username;
+            
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'message-time';
+            timeSpan.textContent = formatTimestamp(timestamp);
+            
+            userInfoSpan.appendChild(usernameSpan);
+            userInfoSpan.appendChild(timeSpan);
+            
+            const statusSpan = document.createElement('span');
+            statusSpan.className = 'message-status';
+            
+            if (wasDecrypted) {
+                statusSpan.innerHTML = '<i class="fas fa-lock-open"></i> Decrypted';
+            } else if (message && isValidBase64(message) && encryptionKey) {
+                statusSpan.innerHTML = '<i class="fas fa-lock"></i> Encrypted (no key)';
+            } else if (message && !isValidBase64(message)) {
+                statusSpan.innerHTML = '<i class="fas fa-unlock"></i> Plain text';
+            }
+            
+            messageHeader.appendChild(userInfoSpan);
+            messageHeader.appendChild(statusSpan);
+            
+            const messageContent = document.createElement('div');
+            messageContent.textContent = message;
+            
+            messageDiv.appendChild(messageHeader);
+            messageDiv.appendChild(messageContent);
+            
+            document.getElementById('messages').appendChild(messageDiv);
+            scrollToBottom();
+        }
+        
+        function addSystemMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message system';
+            
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'message-time';
+            timeSpan.textContent = formatTimestamp(new Date().toISOString());
+            
+            messageDiv.textContent = message;
+            messageDiv.appendChild(timeSpan);
+            
+            document.getElementById('messages').appendChild(messageDiv);
+            scrollToBottom();
+        }
+        
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+        }
+        
+        function scrollToBottom() {
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        // Encryption helper functions
+        function toggleKeyVisibility() {
+            const keyInput = document.getElementById('encryptionKey');
+            const icon = document.getElementById('keyVisibilityIcon');
+            
+            if (keyInput.type === 'password') {
+                keyInput.type = 'text';
+                icon.className = 'fas fa-eye-slash';
+            } else {
+                keyInput.type = 'password';
+                icon.className = 'fas fa-eye';
+            }
+        }
+        
+        function generateRandomKey() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;:,.<>?';
+            let key = '';
+            for (let i = 0; i < 32; i++) {
+                key += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            document.getElementById('encryptionKey').value = key;
+            updateEncryptionStatus();
+            addSystemMessage('New encryption key generated. Share this with your chat partner.');
+        }
+        
+        function copyKeyToClipboard() {
+            const key = document.getElementById('encryptionKey').value;
+            if (!key) {
+                alert('Please generate or enter a key first');
+                return;
+            }
+            
+            navigator.clipboard.writeText(key)
+                .then(() => {
+                    addSystemMessage('Encryption key copied to clipboard. Share it securely!');
+                })
+                .catch(err => {
+                    alert('Failed to copy key: ' + err);
+                });
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            initSocket();
+            
+            // Set up room input
+            const roomInput = document.getElementById('roomInput');
+            roomInput.value = currentRoom;
+            roomInput.addEventListener('keypress', function(event) {
+                if (event.key === 'Enter') {
+                    joinRoom();
+                }
+            });
+            
+            // Only allow numbers in room input
+            roomInput.addEventListener('input', function() {
+                this.value = this.value.replace(/[^0-9]/g, '');
+                if (this.value.length > 3) {
+                    this.value = this.value.slice(0, 3);
+                }
+            });
+            
+            // Set up encryption key input listener
+            const encryptionKeyInput = document.getElementById('encryptionKey');
+            encryptionKeyInput.addEventListener('input', updateEncryptionStatus);
+            
+            // Initialize encryption status
+            updateEncryptionStatus();
+            
+            // Focus on message input
+            document.getElementById('messageInput').focus();
+            
+            // Add welcome message
+            setTimeout(() => {
+
+            }, 1000);
+        });
+    </script>
 </body>
 </html>
+
+
