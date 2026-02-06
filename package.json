@@ -10,8 +10,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-  "dependencies": { 
+  "dependencies": {
     "express": "^5.2.1",
+    "redis": "^5.10.0",
     "socket.io": "^4.8.3"
   }
 }
