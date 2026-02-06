@@ -19,6 +19,8 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 
 // ================== REDIS SETUP ==================
+const redisUrl = process.env.REDIS_URL || "rediss://default:AbsqAAIncDJiNDcyZGU3ZjliMmM0YjQzYjUxNGNjNTQyOTk1MDNlZnAyNDc5MTQ@desired-koi-47914.upstash.io:6379";
+
 const redisUrl = process.env.REDIS_URL;
 
 if (!redisUrl) {
