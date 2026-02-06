@@ -1409,6 +1409,18 @@
             
             // Handle incoming chat messages
             socket.on('chat message', async (data) => {
+                // Receive chat history from server (Redis)
+socket.on("chat-history", (messages) => {
+    messages.forEach(msg => {
+        addChatMessage(
+            msg.username,
+            msg.message,
+            false,
+            msg.timestamp
+        );
+    });
+});
+
                 // Only show messages for current room
                 if (data.room === currentRoom) {
                     // Try to decrypt if we have a key
