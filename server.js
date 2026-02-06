@@ -27,11 +27,18 @@ app.use(express.static("public"));
 
 // Track rooms and users (in-memory for active connections)
 const rooms = new Map(); // roomId -> Set of socketIds
-const users = new Map(); // socketId -> {username, room}
+const users = new Map(); // socketId -> {username, room, isAdmin}
+const admins = new Set(); // Set of socketIds that are admins
+const mutedUsers = new Map(); // socketId -> unmuteTime (timestamp)
 
-// =================== REDIS CONFIGURATION ===================
-// For debugging: Paste your Redis URL directly here
-const REDIS_URL = 'redis://default:Rq8Eio5fK4QnSMVWeq6vywH0FHYJseHa@redis-16146.crce220.us-east-1-4.ec2.cloud.redislabs.com:16146'; // ⬅️ CHANGE THIS TO YOUR CLOUD REDIS URL
+// Admin credentials (in production, use environment variables or a database)
+const ADMIN_CREDENTIALS = {
+  admin1: "admin123", // username: password
+  moderator: "mod123",
+  superadmin: "super123"
+};
+
+const REDIS_URL = 'redis://default:Rq8Eio5fK4QnSMVWeq6vywH0FHYJseHa@redis-16146.crce220.us-east-1-4.ec2.cloud.redislabs.com:16146'
 
 const redisClient = redis.createClient({
   url: REDIS_URL,
@@ -181,6 +188,56 @@ async function getRecentMessages(roomId) {
   }
 }
 
+// Clear all messages for a room
+async function clearRoomMessages(roomId) {
+  try {
+    const roomMessagesKey = `room:${roomId}:messages`;
+    const messageKeys = await redisClient.lRange(roomMessagesKey, 0, -1);
+    
+    // Delete all message keys
+    if (messageKeys.length > 0) {
+      await redisClient.del(...messageKeys);
+    }
+    
+    // Delete the room messages list
+    await redisClient.del(roomMessagesKey);
+    
+    console.log(`✓ Cleared all messages from Redis for room ${roomId}`);
+  } catch (err) {
+    console.error(`Error clearing messages for room ${roomId}:`, err.message);
+  }
+  
+  // Clear from fallback storage
+  if (fallbackStore.has(roomId)) {
+    fallbackStore.delete(roomId);
+    console.log(`✓ Cleared all messages from fallback for room ${roomId}`);
+  }
+}
+
+// Check if user is muted
+function isUserMuted(socketId) {
+  if (mutedUsers.has(socketId)) {
+    const unmuteTime = mutedUsers.get(socketId);
+    if (unmuteTime > Date.now()) {
+      return unmuteTime; // Return remaining mute time
+    } else {
+      mutedUsers.delete(socketId); // Mute expired
+      return false;
+    }
+  }
+  return false;
+}
+
+// Helper function to get user by username
+function getUserByUsername(username) {
+  for (const [socketId, user] of users.entries()) {
+    if (user.username === username) {
+      return { socketId, user };
+    }
+  }
+  return null;
+}
+
 // Cleanup expired messages periodically (for fallback storage)
 setInterval(() => {
   try {
@@ -195,6 +252,13 @@ setInterval(() => {
         fallbackStore.set(roomId, validMessages);
       }
       cleanedCount += (messages.length - validMessages.length);
+    }
+    
+    // Cleanup expired mutes
+    for (const [socketId, unmuteTime] of mutedUsers.entries()) {
+      if (unmuteTime <= now) {
+        mutedUsers.delete(socketId);
+      }
     }
     
     if (cleanedCount > 0) {
@@ -213,7 +277,7 @@ io.on("connection", (socket) => {
   socket.join('001');
   rooms.set('001', rooms.get('001') || new Set());
   rooms.get('001').add(socket.id);
-  users.set(socket.id, { username: 'Guest', room: '001' });
+  users.set(socket.id, { username: 'Guest', room: '001', isAdmin: false });
   
   // Send recent messages from the default room
   getRecentMessages('001').then(recentMessages => {
@@ -231,6 +295,76 @@ io.on("connection", (socket) => {
     
     const room = data.room || user.room;
     const message = data.message || "";
+    
+    // Check for admin login command
+    if (message.startsWith("server!admin!login#")) {
+      const parts = message.split("#");
+      if (parts.length === 2) {
+        const [username, password] = parts[1].split(":");
+        
+        if (username && password && ADMIN_CREDENTIALS[username] === password) {
+          // Successful admin login
+          user.isAdmin = true;
+          admins.add(socket.id);
+          
+          // Send secret confirmation only to this user
+          socket.emit("chat message", {
+            username: "System",
+            message: "🔐 Admin login successful! You now have moderator privileges.",
+            room: room,
+            timestamp: new Date().toISOString(),
+            isSystem: true
+          });
+          
+          console.log(`Admin login: ${socket.id} logged in as ${username}`);
+          return; // Don't broadcast this message to others
+        } else {
+          // Failed login
+          socket.emit("chat message", {
+            username: "System",
+            message: "❌ Invalid admin credentials.",
+            room: room,
+            timestamp: new Date().toISOString(),
+            isSystem: true
+          });
+          return;
+        }
+      }
+    }
+    
+    // Check for admin commands
+    if (message.startsWith("server!")) {
+      const isAdmin = admins.has(socket.id);
+      
+      if (!isAdmin) {
+        socket.emit("chat message", {
+          username: "System",
+          message: "⛔ You don't have permission to use admin commands.",
+          room: room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+        return;
+      }
+      
+      // Handle admin commands
+      await handleAdminCommand(socket, message, room);
+      return;
+    }
+    
+    // Check if user is muted
+    const muteStatus = isUserMuted(socket.id);
+    if (muteStatus) {
+      const remainingTime = Math.ceil((muteStatus - Date.now()) / 1000);
+      socket.emit("chat message", {
+        username: "System",
+        message: `🔇 You are muted for ${remainingTime} more seconds.`,
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      return;
+    }
     
     // Store the message in Redis (or fallback)
     const storedMessage = await storeMessage(
@@ -256,6 +390,214 @@ io.on("connection", (socket) => {
     io.to(room).emit("chat message", messageData);
     console.log(`Message in room ${room}: ${messageData.username}: ${messageData.message}`);
   });
+
+  // Handle admin commands
+  async function handleAdminCommand(socket, message, room) {
+    const user = users.get(socket.id);
+    const isAdmin = admins.has(socket.id);
+    
+    if (!isAdmin) {
+      socket.emit("chat message", {
+        username: "System",
+        message: "⛔ Admin privileges required.",
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      return;
+    }
+    
+    // Parse command
+    const command = message.substring(7); // Remove "server!"
+    
+    if (command === "clear") {
+      // Clear all messages in current room
+      await clearRoomMessages(room);
+      
+      // Notify all users in the room
+      io.to(room).emit("chat message", {
+        username: "System",
+        message: `🔄 Chat cleared by admin ${user.username}.`,
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      
+      console.log(`Admin ${socket.id} cleared room ${room}`);
+      
+    } else if (command.startsWith("mute ")) {
+      const targetUsername = command.substring(5);
+      const targetUser = getUserByUsername(targetUsername);
+      
+      if (targetUser) {
+        // Mute for 5 minutes
+        const unmuteTime = Date.now() + (5 * 60 * 1000);
+        mutedUsers.set(targetUser.socketId, unmuteTime);
+        
+        // Notify target user
+        io.to(targetUser.socketId).emit("chat message", {
+          username: "System",
+          message: `🔇 You have been muted by admin ${user.username} for 5 minutes.`,
+          room: targetUser.user.room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+        
+        // Notify admin
+        socket.emit("chat message", {
+          username: "System",
+          message: `✅ Muted user ${targetUsername} for 5 minutes.`,
+          room: room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+        
+        console.log(`Admin ${socket.id} muted user ${targetUsername}`);
+      } else {
+        socket.emit("chat message", {
+          username: "System",
+          message: `❌ User ${targetUsername} not found.`,
+          room: room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+      }
+      
+    } else if (command.startsWith("kick ")) {
+      const targetUsername = command.substring(5);
+      const targetUser = getUserByUsername(targetUsername);
+      
+      if (targetUser) {
+        // Notify target user
+        io.to(targetUser.socketId).emit("chat message", {
+          username: "System",
+          message: `🚪 You have been kicked by admin ${user.username}.`,
+          room: targetUser.user.room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+        
+        // Disconnect the user
+        setTimeout(() => {
+          if (users.has(targetUser.socketId)) {
+            io.sockets.sockets.get(targetUser.socketId)?.disconnect(true);
+          }
+        }, 1000);
+        
+        // Notify admin
+        socket.emit("chat message", {
+          username: "System",
+          message: `✅ Kicked user ${targetUsername}.`,
+          room: room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+        
+        console.log(`Admin ${socket.id} kicked user ${targetUsername}`);
+      } else {
+        socket.emit("chat message", {
+          username: "System",
+          message: `❌ User ${targetUsername} not found.`,
+          room: room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+      }
+      
+    } else if (command.startsWith("ban ")) {
+      const targetUsername = command.substring(4);
+      const targetUser = getUserByUsername(targetUsername);
+      
+      if (targetUser) {
+        // Ban user (in a real system, you'd store this in Redis/database)
+        // For now, we'll just kick and mute for a very long time
+        const unmuteTime = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
+        mutedUsers.set(targetUser.socketId, unmuteTime);
+        
+        // Notify target user
+        io.to(targetUser.socketId).emit("chat message", {
+          username: "System",
+          message: `🚫 You have been banned by admin ${user.username} for 24 hours.`,
+          room: targetUser.user.room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+        
+        // Disconnect the user
+        setTimeout(() => {
+          if (users.has(targetUser.socketId)) {
+            io.sockets.sockets.get(targetUser.socketId)?.disconnect(true);
+          }
+        }, 1000);
+        
+        // Notify admin
+        socket.emit("chat message", {
+          username: "System",
+          message: `✅ Banned user ${targetUsername} for 24 hours.`,
+          room: room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+        
+        console.log(`Admin ${socket.id} banned user ${targetUsername}`);
+      } else {
+        socket.emit("chat message", {
+          username: "System",
+          message: `❌ User ${targetUsername} not found.`,
+          room: room,
+          timestamp: new Date().toISOString(),
+          isSystem: true
+        });
+      }
+      
+    } else if (command === "list") {
+      // List all users in current room
+      const roomUsers = Array.from(rooms.get(room) || [])
+        .map(socketId => {
+          const u = users.get(socketId);
+          return u ? `${u.username}${admins.has(socketId) ? ' (Admin)' : ''}` : null;
+        })
+        .filter(Boolean);
+      
+      socket.emit("chat message", {
+        username: "System",
+        message: `👥 Users in room ${room}: ${roomUsers.join(', ')}`,
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      
+    } else if (command === "help") {
+      // Show admin commands help
+      const helpMessage = `
+🔧 Admin Commands:
+• server!clear - Clear chat in current room
+• server!mute [username] - Mute user for 5 minutes
+• server!kick [username] - Kick user from chat
+• server!ban [username] - Ban user for 24 hours
+• server!list - List users in current room
+• server!help - Show this help
+• server!admin!login#[username]:[password] - Admin login
+      `.trim();
+      
+      socket.emit("chat message", {
+        username: "System",
+        message: helpMessage,
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+      
+    } else {
+      socket.emit("chat message", {
+        username: "System",
+        message: `❌ Unknown admin command: ${command}. Type "server!help" for available commands.`,
+        room: room,
+        timestamp: new Date().toISOString(),
+        isSystem: true
+      });
+    }
+  }
 
   // Handle room joining
   socket.on("join room", async (roomId) => {
@@ -305,7 +647,7 @@ io.on("connection", (socket) => {
     if (user) {
       user.room = formattedRoom;
     } else {
-      users.set(socket.id, { username: 'Guest', room: formattedRoom });
+      users.set(socket.id, { username: 'Guest', room: formattedRoom, isAdmin: false });
     }
     
     // Send recent messages from the new room
@@ -357,6 +699,12 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     const user = users.get(socket.id);
     if (user) {
+      // Remove from admin set
+      admins.delete(socket.id);
+      
+      // Remove from muted users
+      mutedUsers.delete(socket.id);
+      
       // Remove from room tracking
       const roomUsers = rooms.get(user.room);
       if (roomUsers) {
@@ -402,6 +750,8 @@ app.get("/api/rooms", (req, res) => {
   res.json({
     totalRooms: roomList.length,
     totalUsers: Array.from(users.keys()).length,
+    totalAdmins: admins.size,
+    totalMuted: mutedUsers.size,
     rooms: roomList,
     timestamp: new Date().toISOString()
   });
@@ -439,6 +789,10 @@ app.get("/api/message-stats", async (req, res) => {
       fallback: {
         totalMessages: fallbackTotal,
         messagesPerRoom: fallbackStats
+      },
+      adminStats: {
+        activeAdmins: admins.size,
+        mutedUsers: mutedUsers.size
       },
       timestamp: new Date().toISOString()
     });
@@ -517,6 +871,7 @@ server.listen(PORT, async () => {
   console.log(`Rooms available: 001-100`);
   console.log(`Messages will be stored in Redis for 6 hours`);
   console.log(`Redis URL: ${REDIS_URL.substring(0, 50)}${REDIS_URL.length > 50 ? '...' : ''}`);
+  console.log(`Admin users configured: ${Object.keys(ADMIN_CREDENTIALS).join(', ')}`);
   
   // Ensure Redis connection is ready
   try {
