@@ -3,6 +3,7 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
+const redis = require("redis");
 
 // Create Express app
 const app = express();
@@ -24,75 +25,185 @@ const PORT = process.env.PORT || 3000;
 // Serve static files from "public" folder
 app.use(express.static("public"));
 
-// Track rooms and users
+// Track rooms and users (in-memory for active connections)
 const rooms = new Map(); // roomId -> Set of socketIds
 const users = new Map(); // socketId -> {username, room}
 
-// Store messages temporarily (for 6 hours)
-const messageStore = new Map(); // roomId -> Array of {username, message, timestamp, expiresAt}
+// =================== REDIS CONFIGURATION ===================
+// For debugging: Paste your Redis URL directly here
+const REDIS_URL = 'redis://default:Rq8Eio5fK4QnSMVWeq6vywH0FHYJseHa@redis-16146.crce220.us-east-1-4.ec2.cloud.redislabs.com:16146'; // ⬅️ CHANGE THIS TO YOUR CLOUD REDIS URL
+
+const redisClient = redis.createClient({
+  url: REDIS_URL,
+  // For cloud Redis with TLS (uncomment if needed):
+  // socket: {
+  //   tls: true,
+  //   rejectUnauthorized: false
+  // }
+});
+
+// Redis event handlers for better debugging
+redisClient.on('error', (err) => {
+  console.error('Redis Client Error:', err.message);
+  console.error('Full error:', err);
+});
+
+redisClient.on('connect', () => {
+  console.log('Redis Client Connected');
+});
+
+redisClient.on('ready', () => {
+  console.log('Redis Client Ready');
+});
+
+redisClient.on('reconnecting', () => {
+  console.log('Redis Client Reconnecting...');
+});
+
+// Fallback in-memory storage for when Redis fails
+const fallbackStore = new Map();
+
+// Connect to Redis
+redisClient.connect().then(() => {
+  console.log('Connected to Redis successfully');
+}).catch(err => {
+  console.error('Failed to connect to Redis:', err.message);
+  console.warn('⚠️  Using fallback in-memory storage (messages will not persist)');
+});
+// =================== END REDIS CONFIGURATION ===================
 
 // Add a simple endpoint that just returns 200 OK
 app.get("/ping", (req, res) => {
   res.status(200).send("pong");
 });
 
-// Cleanup interval to remove expired messages
-setInterval(cleanupExpiredMessages, 3600000); // Run every hour
-
-function cleanupExpiredMessages() {
-  const now = Date.now();
-  for (const [roomId, messages] of messageStore) {
-    const validMessages = messages.filter(msg => msg.expiresAt > now);
-    if (validMessages.length === 0) {
-      messageStore.delete(roomId);
-    } else {
-      messageStore.set(roomId, validMessages);
-    }
-  }
-  console.log(`Cleaned up expired messages at ${new Date().toISOString()}`);
-}
-
-function storeMessage(roomId, username, message) {
+// Store message in Redis with 6-hour expiration (with fallback)
+async function storeMessage(roomId, username, message) {
   const timestamp = new Date().toISOString();
-  const expiresAt = Date.now() + (6 * 60 * 60 * 1000); // 6 hours from now
-  
-  if (!messageStore.has(roomId)) {
-    messageStore.set(roomId, []);
-  }
-  
-  const messages = messageStore.get(roomId);
-  messages.push({
+  const messageKey = `message:${Date.now()}:${Math.random().toString(36).substr(2, 9)}`;
+  const messageData = {
     username,
     message,
     timestamp,
-    expiresAt
-  });
+    room: roomId
+  };
   
-  // Keep only the last 100 messages per room to prevent memory issues
-  if (messages.length > 200) {
-    messages.splice(0, messages.length - 200);
+  try {
+    // Try Redis first
+    await redisClient.setEx(messageKey, 6 * 60 * 60, JSON.stringify(messageData));
+    
+    // Also add to room's message list for easy retrieval
+    const roomMessagesKey = `room:${roomId}:messages`;
+    await redisClient.lPush(roomMessagesKey, messageKey);
+    
+    // Trim list to keep only last 200 messages
+    await redisClient.lTrim(roomMessagesKey, 0, 199);
+    
+    // Set expiration on room messages list as well (6 hours + buffer)
+    await redisClient.expire(roomMessagesKey, 6 * 60 * 60 + 3600);
+    
+    console.log(`✓ Message stored in Redis for room ${roomId}`);
+    
+  } catch (redisError) {
+    console.error('Redis store failed, using fallback storage:', redisError.message);
+    
+    // Fallback to in-memory storage
+    if (!fallbackStore.has(roomId)) {
+      fallbackStore.set(roomId, []);
+    }
+    
+    const messages = fallbackStore.get(roomId);
+    messages.push({
+      ...messageData,
+      expiresAt: Date.now() + (6 * 60 * 60 * 1000)
+    });
+    
+    // Keep only last 100 messages
+    if (messages.length > 100) {
+      messages.splice(0, messages.length - 100);
+    }
+    
+    console.log(`⚠️  Message stored in fallback memory for room ${roomId}`);
   }
   
-  return { username, message, timestamp, expiresAt };
+  return messageData;
 }
 
-function getRecentMessages(roomId) {
-  const now = Date.now();
-  if (!messageStore.has(roomId)) {
+// Get recent messages from Redis for a specific room (with fallback)
+async function getRecentMessages(roomId) {
+  try {
+    // Try Redis first
+    const roomMessagesKey = `room:${roomId}:messages`;
+    const messageKeys = await redisClient.lRange(roomMessagesKey, 0, -1);
+    
+    const messages = [];
+    
+    for (const messageKey of messageKeys) {
+      try {
+        const messageData = await redisClient.get(messageKey);
+        if (messageData) {
+          const message = JSON.parse(messageData);
+          messages.push(message);
+        }
+      } catch (err) {
+        console.error(`Error fetching message ${messageKey}:`, err.message);
+      }
+    }
+    
+    // Sort by timestamp (newest first)
+    messages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    // Return only last 100 messages (oldest first for display)
+    const result = messages.reverse().slice(-100);
+    console.log(`✓ Retrieved ${result.length} messages from Redis for room ${roomId}`);
+    return result;
+    
+  } catch (err) {
+    console.error(`Redis get failed for room ${roomId}, using fallback:`, err.message);
+    
+    // Fallback to in-memory storage
+    if (fallbackStore.has(roomId)) {
+      const now = Date.now();
+      const messages = fallbackStore.get(roomId)
+        .filter(msg => msg.expiresAt > now)
+        .map(({ username, message, timestamp, room }) => ({
+          username,
+          message,
+          timestamp,
+          room
+        }));
+      
+      console.log(`⚠️  Retrieved ${messages.length} messages from fallback for room ${roomId}`);
+      return messages.slice(-100); // Return last 100 messages
+    }
+    
     return [];
   }
-  
-  const messages = messageStore.get(roomId)
-    .filter(msg => msg.expiresAt > now)
-    .map(({ username, message, timestamp }) => ({
-      username,
-      message,
-      timestamp,
-      room: roomId
-    }));
-  
-  return messages;
 }
+
+// Cleanup expired messages periodically (for fallback storage)
+setInterval(() => {
+  try {
+    const now = Date.now();
+    let cleanedCount = 0;
+    
+    for (const [roomId, messages] of fallbackStore) {
+      const validMessages = messages.filter(msg => msg.expiresAt > now);
+      if (validMessages.length === 0) {
+        fallbackStore.delete(roomId);
+      } else {
+        fallbackStore.set(roomId, validMessages);
+      }
+      cleanedCount += (messages.length - validMessages.length);
+    }
+    
+    if (cleanedCount > 0) {
+      console.log(`Cleaned up ${cleanedCount} expired messages from fallback storage`);
+    }
+  } catch (err) {
+    console.error('Error during fallback cleanup:', err);
+  }
+}, 3600000); // Run every hour
 
 // Handle socket connections
 io.on("connection", (socket) => {
@@ -105,23 +216,24 @@ io.on("connection", (socket) => {
   users.set(socket.id, { username: 'Guest', room: '001' });
   
   // Send recent messages from the default room
-  const recentMessages = getRecentMessages('001');
-  recentMessages.forEach(msg => {
-    socket.emit("chat message", msg);
+  getRecentMessages('001').then(recentMessages => {
+    recentMessages.forEach(msg => {
+      socket.emit("chat message", msg);
+    });
   });
   
   socket.emit('room joined', '001');
 
   // Listen for chat messages
-  socket.on("chat message", (data) => {
+  socket.on("chat message", async (data) => {
     const user = users.get(socket.id);
     if (!user) return;
     
     const room = data.room || user.room;
     const message = data.message || "";
     
-    // Store the message
-    const storedMessage = storeMessage(
+    // Store the message in Redis (or fallback)
+    const storedMessage = await storeMessage(
       room,
       data.username || user.username,
       message
@@ -146,7 +258,7 @@ io.on("connection", (socket) => {
   });
 
   // Handle room joining
-  socket.on("join room", (roomId) => {
+  socket.on("join room", async (roomId) => {
     // Validate room ID (001-100)
     if (!/^\d{3}$/.test(roomId)) {
       socket.emit('error', 'Invalid room ID. Must be 3 digits (001-100).');
@@ -197,7 +309,7 @@ io.on("connection", (socket) => {
     }
     
     // Send recent messages from the new room
-    const recentMessages = getRecentMessages(formattedRoom);
+    const recentMessages = await getRecentMessages(formattedRoom);
     recentMessages.forEach(msg => {
       socket.emit("chat message", msg);
     });
@@ -295,24 +407,102 @@ app.get("/api/rooms", (req, res) => {
   });
 });
 
-// Add API endpoint to get message statistics
-app.get("/api/message-stats", (req, res) => {
-  const now = Date.now();
-  const roomStats = {};
-  let totalMessages = 0;
+// Add API endpoint to get message statistics from Redis
+app.get("/api/message-stats", async (req, res) => {
+  try {
+    // Get all room keys from Redis
+    const roomKeys = await redisClient.keys('room:*:messages');
+    const roomStats = {};
+    let totalMessages = 0;
+    
+    for (const roomKey of roomKeys) {
+      const roomId = roomKey.split(':')[1];
+      const messageCount = await redisClient.lLen(roomKey);
+      roomStats[roomId] = messageCount;
+      totalMessages += messageCount;
+    }
+    
+    // Add fallback storage stats
+    let fallbackTotal = 0;
+    const fallbackStats = {};
+    for (const [roomId, messages] of fallbackStore) {
+      fallbackStats[roomId] = messages.length;
+      fallbackTotal += messages.length;
+    }
+    
+    res.json({
+      redis: {
+        totalMessages,
+        messagesPerRoom: roomStats,
+        connected: redisClient.isReady
+      },
+      fallback: {
+        totalMessages: fallbackTotal,
+        messagesPerRoom: fallbackStats
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('Error getting message stats:', err);
+    res.status(500).json({ 
+      error: 'Failed to get message statistics',
+      details: err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Add API endpoint to get messages for a specific room
+app.get("/api/rooms/:roomId/messages", async (req, res) => {
+  const { roomId } = req.params;
   
-  for (const [roomId, messages] of messageStore) {
-    const validMessages = messages.filter(msg => msg.expiresAt > now);
-    roomStats[roomId] = validMessages.length;
-    totalMessages += validMessages.length;
+  if (!/^\d{3}$/.test(roomId)) {
+    return res.status(400).json({ error: 'Invalid room ID format' });
   }
   
-  res.json({
-    totalMessages,
-    messagesPerRoom: roomStats,
-    cleanupRuns: Math.floor(Date.now() / 3600000), // hours since epoch
-    timestamp: new Date().toISOString()
-  });
+  try {
+    const messages = await getRecentMessages(roomId);
+    res.json({
+      roomId,
+      messageCount: messages.length,
+      messages: messages,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error(`Error getting messages for room ${roomId}:`, err);
+    res.status(500).json({ 
+      error: 'Failed to get messages',
+      details: err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Add API endpoint to check Redis health
+app.get("/api/redis-health", async (req, res) => {
+  try {
+    const pingResult = await redisClient.ping();
+    
+    res.json({
+      status: 'healthy',
+      redis: pingResult === 'PONG' ? 'connected' : 'disconnected',
+      pingResult: pingResult,
+      url: REDIS_URL.substring(0, 50) + (REDIS_URL.length > 50 ? '...' : ''), // Show first 50 chars
+      timestamp: new Date().toISOString(),
+      isReady: redisClient.isReady,
+      fallbackActive: fallbackStore.size > 0
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: 'unhealthy',
+      redis: 'disconnected',
+      error: err.message,
+      url: REDIS_URL.substring(0, 50) + (REDIS_URL.length > 50 ? '...' : ''),
+      timestamp: new Date().toISOString(),
+      isReady: redisClient.isReady,
+      fallbackActive: fallbackStore.size > 0
+    });
+  }
 });
 
 // Serve main HTML file
@@ -321,24 +511,71 @@ app.get("/", (req, res) => {
 });
 
 // Start server
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Room-based chat system ready`);
   console.log(`Rooms available: 001-100`);
-  console.log(`Messages will be stored for 6 hours`);
+  console.log(`Messages will be stored in Redis for 6 hours`);
+  console.log(`Redis URL: ${REDIS_URL.substring(0, 50)}${REDIS_URL.length > 50 ? '...' : ''}`);
+  
+  // Ensure Redis connection is ready
+  try {
+    await redisClient.ping();
+    console.log('✅ Redis connection verified - PONG received');
+    
+    // Test Redis is working by setting a test key
+    await redisClient.set('chat:test:connection', 'OK', {
+      EX: 10 // expires in 10 seconds
+    });
+    console.log('✅ Redis test write successful');
+    
+    // Check existing data
+    const keys = await redisClient.keys('room:*');
+    console.log(`📊 Found ${keys.length} existing room keys in Redis`);
+    
+  } catch (err) {
+    console.error('❌ Redis connection failed:', err.message);
+    console.error('Make sure your Redis URL is correct and the service is accessible.');
+    console.error('Current Redis URL:', REDIS_URL);
+    
+    if (REDIS_URL === 'redis://localhost:6379') {
+      console.log('\n⚠️  You are using localhost:6379');
+      console.log('   If using cloud Redis, update the REDIS_URL variable at the top of server.js');
+      console.log('   Example: const REDIS_URL = \'redis://username:password@hostname:port\';');
+    }
+    
+    console.warn('\n⚠️  Server will continue with fallback in-memory storage');
+    console.warn('   Messages will NOT persist between server restarts');
+  }
 });
 
 // Handle graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('SIGTERM received. Shutting down gracefully...');
+  try {
+    if (redisClient.isReady) {
+      await redisClient.quit();
+      console.log('Redis connection closed');
+    }
+  } catch (err) {
+    console.error('Error closing Redis connection:', err);
+  }
   server.close(() => {
     console.log('Server closed');
     process.exit(0);
   });
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('SIGINT received. Shutting down gracefully...');
+  try {
+    if (redisClient.isReady) {
+      await redisClient.quit();
+      console.log('Redis connection closed');
+    }
+  } catch (err) {
+    console.error('Error closing Redis connection:', err);
+  }
   server.close(() => {
     console.log('Server closed');
     process.exit(0);
